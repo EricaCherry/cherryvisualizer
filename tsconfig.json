@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "strict": true,
+    "noImplicitOverride": true,
+    "noUnusedLocals": false,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "forceConsistentCasingInFileNames": true,
+    "baseUrl": ".",
+    "paths": {
+      "@cherry/core": ["packages/core/src/index.ts"],
+      "@cherry/core/*": ["packages/core/src/*"],
+      "@cherry/modes": ["packages/modes/src/index.ts"],
+      "@cherry/modes/*": ["packages/modes/src/*"]
+    },
+    "noEmit": true
+  },
+  "include": ["packages/*/src/**/*.ts", "apps/web/src/**/*.ts"]
+}

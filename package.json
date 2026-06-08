@@ -1,0 +1,21 @@
+{
+  "name": "cherry",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Cherry — a modular, open-source music visualizer where every visual is a swappable plugin.",
+  "license": "MIT",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace @cherry/web",
+    "build": "npm run build --workspace @cherry/web",
+    "preview": "npm run preview --workspace @cherry/web",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}

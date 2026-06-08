@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>🍒 Cherry — Music Visualizer</title>
+    <link rel="stylesheet" href="./src/styles.css" />
+  </head>
+  <body>
+    <canvas id="stage"></canvas>
+
+    <div id="hint">
+      <div class="hint-card">
+        <h1>🍒 Cherry</h1>
+        <p>Drop an audio file anywhere — or use your mic, or run the demo signal.</p>
+      </div>
+    </div>
+
+    <div id="hud">
+      <span id="hud-mode">—</span>
+      <span class="hud-sep">·</span>
+      <span id="hud-bpm">-- BPM</span>
+      <span class="hud-sep">·</span>
+      <span id="hud-beat" class="beat-dot">●</span>
+      <span class="hud-sep">·</span>
+      <span id="hud-fps">0 fps</span>
+    </div>
+
+    <div id="controls">
+      <label class="btn" title="Open an audio file">
+        📁 Audio<input id="file" type="file" accept="audio/*" hidden />
+      </label>
+      <button id="mic" class="btn" title="Use microphone">🎤 Mic</button>
+      <button id="demo" class="btn" title="Run a synthetic demo signal">🎲 Demo</button>
+      <button id="playpause" class="btn" title="Play / pause">⏯︎</button>
+      <select id="mode" title="Visualizer mode"></select>
+      <span id="status">no input</span>
+    </div>
+
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>
