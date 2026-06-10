@@ -5,9 +5,9 @@
 Open a song. Pick a mode. Watch the music play it — no player, no controls,
 no install, no server. One double-clickable executable, written in Rust.
 
-| Waveform Breakout | Beat Runner |
+| Waveform Breakout | Beat Surfer |
 |---|---|
-| ![Breakout](docs/screenshots/breakout-rust.png) | ![Runner](docs/screenshots/runner-rust.png) |
+| ![Breakout](docs/screenshots/breakout-rust.png) | ![Surfer](docs/screenshots/surfer-rust.png) |
 
 ## The modes
 
@@ -17,13 +17,21 @@ arena that bats the ball up with power taken from the music's loudness. The
 ball breaks the bricks (each column lit by its own frequency band); strong
 beats kick the ball; broken bricks grow back so the rally never ends.
 
-**Beat Runner** — an endless runner whose jump physics are ported from
-[Chromium's T-Rex runner](https://source.chromium.org/chromium/chromium/src/+/main:components/neterror/resources/dino_game/)
-(BSD-licensed; gravity `0.6`, jump velocity `-10`, speed `6→13`, rescaled from
-its 600×150 canvas). What makes it a visualizer: Cherry pre-analyzes the whole
-track at load, so **every beat becomes an obstacle placed to arrive exactly on
-the beat**, world speed follows the track's loudness curve, and the runner
-jumps itself — apex timed to the beat. Nobody is holding the spacebar.
+**Beat Surfer** — a 3D lane runner (think Subway Surfers), played entirely by
+the music. Cherry pre-analyzes the whole track at load and turns the beat grid
+into choreography: strong beats become **trains** in the player's lane with a
+swerve scheduled before they arrive, other beats become **barriers** with the
+jump timed so its apex lands exactly on the beat (Chromium T-Rex airtime), and
+treble runs become **coin trails laid along the player's own future path** —
+curving through swerves, arcing over jumps, every coin collected on the music.
+Live layers animate the world: bass pulses the portal pylons and the sun, mids
+light the train windows and breathe the skyline, treble spins the coins and
+twinkles the stars, loudness drives world speed and the camera's FOV.
+Rendered as flat-shaded low-poly with hand-rolled distance fog and wire
+outlines — no textures, no shaders. Mechanics referenced from MIT-licensed
+open-source runners ([NovemberDev's Godot endless runner](https://github.com/NovemberDev/novemberdev-godot-endless-runner-tutorial),
+[joaokucera's Unity endless runner](https://github.com/joaokucera/unity-endless-runner))
+and jump timing from [Chromium's T-Rex runner](https://source.chromium.org/chromium/chromium/src/+/main:components/neterror/resources/dino_game/) (BSD).
 
 ## Run it
 
@@ -50,7 +58,7 @@ src/
   modes/
     mod.rs         the Mode trait — a mode is one file implementing it
     breakout.rs    waveform-paddle breakout (rapier2d physics)
-    runner.rs      beat-synced T-Rex runner (ported kinematics, no physics dep)
+    surfer.rs      beat-choreographed 3D lane runner (immediate-mode 3D + fog)
 ```
 
 The design that makes "the music plays the game" exact rather than reactive:
@@ -75,10 +83,11 @@ sources to adapt). The other docs in `docs/` are research from an earlier web
 prototype; the mode catalog and strategy remain the guiding documents, ported
 mode by mode into this native app.
 
-Headless capture for development/CI: `cherry --shot [breakout|runner]
+Headless capture for development/CI: `cherry --shot [breakout|surfer]
 [--file song]` renders 180 frames on a silent fixed clock and writes a PNG.
 
 ## License
 
-MIT. Runner kinematics ported from Chromium's T-Rex runner (BSD-style license,
-The Chromium Authors).
+MIT. Jump timing ported from Chromium's T-Rex runner (BSD-style license, The
+Chromium Authors); lane-runner mechanics referenced from the MIT-licensed
+projects credited above.

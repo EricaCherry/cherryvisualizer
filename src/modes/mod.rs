@@ -6,7 +6,7 @@
 //! here + one line in `main.rs`.
 
 pub mod breakout;
-pub mod runner;
+pub mod surfer;
 
 use crate::analysis::Features;
 use crate::track::Track;

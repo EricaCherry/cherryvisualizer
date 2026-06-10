@@ -22,11 +22,21 @@ pub struct Beat {
 }
 
 /// Whole-track pre-analysis at `hop_dt` resolution.
+///
+/// Three stacked band curves (plus the beat grid) give modes independent
+/// "layers" of the music to animate different things with: bass drives the
+/// beat grid, `mid` carries the body of the song, `treb` carries hats/sparkle.
 pub struct Profile {
     pub hop_dt: f32,
     /// Per-hop full-band RMS loudness.
     pub rms: Vec<f32>,
     pub max_rms: f32,
+    /// Per-hop mid-band energy (~180 Hz – 2 kHz), normalized 0..1.
+    /// (Choreography layer for future modes; treble and bass are in use today.)
+    #[allow(dead_code)]
+    pub mid: Vec<f32>,
+    /// Per-hop treble energy (above ~2 kHz), normalized 0..1.
+    pub treb: Vec<f32>,
     pub beats: Vec<Beat>,
 }
 
@@ -36,24 +46,44 @@ impl Profile {
         let hop_dt = HOP as f32 / sr as f32;
         let n_hops = pcm.len() / HOP;
 
-        // One-pole low-pass (~180 Hz) isolates the kick/bass register.
-        let a = 1.0 - (-2.0 * PI * 180.0 / sr as f32).exp();
-        let mut lp = 0.0f32;
+        // Two one-pole low-passes split the signal into three stacked bands:
+        // bass (< ~180 Hz, the kick register), mid (~180 Hz – 2 kHz), and
+        // treble (the residue above ~2 kHz, hats and sparkle).
+        let a_lo = 1.0 - (-2.0 * PI * 180.0 / sr as f32).exp();
+        let a_hi = 1.0 - (-2.0 * PI * 2000.0 / sr as f32).exp();
+        let (mut lp_lo, mut lp_hi) = (0.0f32, 0.0f32);
 
         let mut rms = Vec::with_capacity(n_hops);
         let mut low = Vec::with_capacity(n_hops);
+        let mut mid = Vec::with_capacity(n_hops);
+        let mut treb = Vec::with_capacity(n_hops);
         for h in 0..n_hops {
             let mut full = 0.0f32;
             let mut bass = 0.0f32;
+            let mut mid_e = 0.0f32;
+            let mut treb_e = 0.0f32;
             for &x in &pcm[h * HOP..(h + 1) * HOP] {
-                lp += a * (x - lp);
+                lp_lo += a_lo * (x - lp_lo);
+                lp_hi += a_hi * (x - lp_hi);
+                let m = lp_hi - lp_lo;
+                let t = x - lp_hi;
                 full += x * x;
-                bass += lp * lp;
+                bass += lp_lo * lp_lo;
+                mid_e += m * m;
+                treb_e += t * t;
             }
             rms.push((full / HOP as f32).sqrt());
             low.push((bass / HOP as f32).sqrt());
+            mid.push((mid_e / HOP as f32).sqrt());
+            treb.push((treb_e / HOP as f32).sqrt());
         }
         let max_rms = rms.iter().fold(0.0f32, |m, &v| m.max(v)).max(1e-6);
+        for v in [&mut mid, &mut treb] {
+            let max = v.iter().fold(0.0f32, |m, &x| m.max(x)).max(1e-6);
+            for x in v.iter_mut() {
+                *x /= max;
+            }
+        }
 
         // Beats: bass energy spikes over a ~1s trailing average, 220ms apart min.
         let mut beats = Vec::new();
@@ -74,7 +104,7 @@ impl Profile {
             }
         }
 
-        Profile { hop_dt, rms, max_rms, beats }
+        Profile { hop_dt, rms, max_rms, mid, treb, beats }
     }
 
     /// First beat in the half-open interval (t0, t1], if any.
@@ -86,14 +116,23 @@ impl Profile {
 
     /// Loudness at time `t`, normalized 0..1 against the track's own peak.
     pub fn loudness_at(&self, t: f32) -> f32 {
-        if self.rms.is_empty() {
+        Self::sample(&self.rms, self.hop_dt, t) / self.max_rms
+    }
+
+    /// Normalized treble energy at time `t` (coin/sparkle layer).
+    pub fn treble_at(&self, t: f32) -> f32 {
+        Self::sample(&self.treb, self.hop_dt, t)
+    }
+
+    fn sample(curve: &[f32], hop_dt: f32, t: f32) -> f32 {
+        if curve.is_empty() {
             return 0.0;
         }
-        let f = (t / self.hop_dt).max(0.0);
-        let i = (f as usize).min(self.rms.len() - 1);
-        let j = (i + 1).min(self.rms.len() - 1);
-        let frac = f - i as f32;
-        (self.rms[i] * (1.0 - frac) + self.rms[j] * frac) / self.max_rms
+        let f = (t / hop_dt).max(0.0);
+        let i = (f as usize).min(curve.len() - 1);
+        let j = (i + 1).min(curve.len() - 1);
+        let frac = (f - i as f32).min(1.0);
+        curve[i] * (1.0 - frac) + curve[j] * frac
     }
 }
 

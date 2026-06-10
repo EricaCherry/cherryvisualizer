@@ -4,7 +4,7 @@
 //! Controls:  O open a song · 1/2 or Tab switch mode · Space pause · R restart
 //!
 //! CLI: `cherry [--file <audio>]`
-//!      `cherry --shot [breakout|runner] [--file <audio>]`  -> renders 180
+//!      `cherry --shot [breakout|surfer] [--file <audio>]`  -> renders 180
 //!      frames headlessly (silent fixed clock), saves shot-<mode>.png, exits.
 //!      `cherry --gen-wav <path>`  -> writes a small test WAV and exits.
 
@@ -19,7 +19,7 @@ use std::path::PathBuf;
 
 use analysis::Analyser;
 use audio::AudioEngine;
-use modes::{breakout::Breakout, runner::Runner, FrameCtx, Mode};
+use modes::{breakout::Breakout, surfer::Surfer, FrameCtx, Mode};
 use view::{INK, INK_DIM};
 
 const FFT_LEN: usize = 2048;
@@ -89,9 +89,9 @@ async fn main() {
     }
 
     let mut analyser = Analyser::new(FFT_LEN);
-    let mut modes: Vec<Box<dyn Mode>> = vec![Box::new(Breakout::new()), Box::new(Runner::new())];
+    let mut modes: Vec<Box<dyn Mode>> = vec![Box::new(Breakout::new()), Box::new(Surfer::new())];
     let mut cur = match args.shot.as_deref() {
-        Some("runner") => 1,
+        Some("surfer") => 1,
         _ => 0,
     };
     for m in modes.iter_mut() {
