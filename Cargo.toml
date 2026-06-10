@@ -1,0 +1,12 @@
+[package]
+name = "cherry"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+macroquad = { version = "0.4.15", default-features = false }
+rapier2d = { version = "0.33.0", features = ["simd-stable"] }
+realfft = "3.5.0"
+rfd = "0.17.2"
+rodio = "0.22.2"
+rustfft = "6.4.1"

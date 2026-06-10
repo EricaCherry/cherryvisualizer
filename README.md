@@ -1,105 +1,84 @@
 # 🍒 Cherry
 
-**A modular, open-source music visualizer where every visual is a swappable plugin —
-inspired by games, demos, and the whole history of audio-reactive code.**
+**A native, open-source music visualizer where the audio plays the game.**
 
-Drop in an audio file, pick a mode, watch the music play it. Run it in a browser with zero
-install, on the desktop, or headless to render a frame-perfect MP4 for a video.
+Open a song. Pick a mode. Watch the music play it — no player, no controls,
+no install, no server. One double-clickable executable, written in Rust.
 
-![Waveform Breakout (3D) and Milkdrop](docs/screenshots/breakout3d-milkdrop.jpg)
+| Waveform Breakout | Beat Runner |
+|---|---|
+| ![Breakout](docs/screenshots/breakout-rust.png) | ![Runner](docs/screenshots/runner-rust.png) |
 
-*Left: Waveform Breakout — a lit 3D scene where the spectrum builds the brick wall and the waveform shoves the ball. Right: Milkdrop, via Butterchurn (MIT), with thousands of community presets.*
+## The modes
 
-> Status: **Phase 2 — runnable, 7 modes.** The monorepo, the AudioFeatures bus, and the Mode ABI
-> work end-to-end against a dropped audio file or mic — including a 3D arcade mode and the full
-> Milkdrop preset engine. See the [roadmap](docs/ROADMAP.md) for what's next.
+**Waveform Breakout** — breakout with no player and no paddle sprite: **the live
+waveform IS the paddle.** It forms a deforming surface along the bottom of the
+arena that bats the ball up with power taken from the music's loudness. The
+ball breaks the bricks (each column lit by its own frequency band); strong
+beats kick the ball; broken bricks grow back so the rally never ends.
 
-![All six modes](docs/screenshots/all-modes.jpg)
+**Beat Runner** — an endless runner whose jump physics are ported from
+[Chromium's T-Rex runner](https://source.chromium.org/chromium/chromium/src/+/main:components/neterror/resources/dino_game/)
+(BSD-licensed; gravity `0.6`, jump velocity `-10`, speed `6→13`, rescaled from
+its 600×150 canvas). What makes it a visualizer: Cherry pre-analyzes the whole
+track at load, so **every beat becomes an obstacle placed to arrive exactly on
+the beat**, world speed follows the track's loudness curve, and the runner
+jumps itself — apex timed to the beat. Nobody is holding the spacebar.
 
-*Six modes, one ABI: Waveform Breakout · Synthwave Grid Drive · Circular Radial Bars · Starfield Warp · Lissajous Vectorscope · Spectrum Bars.*
-
----
-
-## What makes it different
-
-- **One plugin contract, every kind of visual.** Classic spectrum bars, demoscene shaders,
-  GPU particle galaxies, 3D fly-throughs, **and** full physics games all implement the same
-  tiny interface and composite through one render pipeline.
-- **The music plays the game.** The flagship mode is a Breakout where the stereo **waveform
-  forms the paddles** that push the ball and the **spectrum builds the bricks** — one of a
-  whole category of arcade / runner / "oddly satisfying" modes.
-- **225+ modes catalogued**, each with its exact audio→visual mapping and a permissively-licensed
-  source to adapt from. See **[the catalog](docs/MODES.md)**.
-- **Frame-perfect video export.** Modes are deterministic, so the same code that runs live in
-  your browser renders a bit-identical MP4 — reproducible, channel-ready output.
-- **Permissive by construction.** Everything shipped is MIT/BSD/Apache. Every GPL/LGPL/NC trap
-  is mapped and routed around.
-
-## The stack
-
-TypeScript core · **Three.js WebGPU + TSL** (one shader source → WebGPU *and* a WebGL2 fallback) ·
-a single **AudioFeatures bus** with realtime + deterministic drivers · lazy per-backend renderers
-(TSL · raw-WGSL compute · OGL · regl · PixiJS · Phaser4+Rapier · Butterchurn) · three artifacts
-from one repo: **web app → Tauri 2 desktop → headless video export.** Python is an *optional*
-offline pre-analysis sidecar (BPM/key/beats), never a runtime dependency.
-
-*Why not Python as the base? The visual code worth adapting — Butterchurn's 15k+ Milkdrop
-presets, Shadertoy, three.js, Phaser — all lives in the web stack, and a URL is the whole
-product. Full reasoning in [docs/PLAN.md](docs/PLAN.md#the-decision-you-asked-for-language--base).*
-
-## Write a mode in ~20 lines
-
-Every mode is one file implementing the ABI — declare which audio features you want, draw a frame:
-
-```ts
-const Plasma: VisualizerMode = {
-  manifest: {
-    id: "demo.plasma", name: "Plasma", apiVersion: "1.0.0",
-    category: "shader", backend: "tsl",
-    audioPorts: ["fftTex", "bass", "beat"],   // the only audio the host wires up
-    deterministic: true, license: "MIT",
-    params: { warp: { type: "float", default: 1.2, min: 0, max: 4, automatable: true } },
-  },
-  init(ctx)  { /* build a fullscreen TSL quad, bind uniforms */ },
-  resize()   {},
-  update(f)  { /* push f.bass, f.beat, f.fftTex into uniforms */ },
-  render()   { /* draw one frame into ctx.outputTarget */ },
-  dispose()  {},
-};
-```
-
-The host owns the GPU context and the audio — modes never touch `AudioContext` or create a
-canvas. Full contract in **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
-
-## Run it locally
-
-```bash
-npm install        # workspaces: @cherry/core, @cherry/modes, @cherry/web
-npm run dev         # Vite dev server → http://localhost:5173
-npm run build       # production build of the web app
-npm run typecheck   # tsc across the whole monorepo
-```
-
-Then open the page, **drop an audio file anywhere** (or click 🎤 Mic, or 🎲 Demo for a synthetic
-signal), and use the dropdown to switch modes. Monorepo layout:
+## Run it
 
 ```
-packages/core    @cherry/core   — Mode ABI, AudioFeatures bus, realtime + deterministic drivers (zero deps)
-packages/modes   @cherry/modes  — 7 modes: breakout (3D), milkdrop, synthwave grid, radial bars, starfield, lissajous, spectrum bars
-apps/web         @cherry/web    — the Vite host: renderer, audio input, mode switcher, HUD
+cargo run --release            # build + launch
+cargo run --release -- --file path\to\song.mp3
 ```
 
-## Documentation
+The binary lands at `target/release/cherry.exe` — copy it anywhere and
+double-click it. Supports mp3, wav, flac, ogg, m4a.
 
-| Doc | What's in it |
-|-----|--------------|
-| **[PLAN.md](docs/PLAN.md)** | Vision, the language decision, the gap we fill, scope discipline, success criteria. |
-| **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** | The Mode ABI, the AudioFeatures bus, all backends, the repo layout, the tech-choices table, and the hardening backlog. |
-| **[MODES.md](docs/MODES.md)** | All 225 modes by category + a "greatest hits" starter set, with audio mappings, sources, and licenses. |
-| **[ROADMAP.md](docs/ROADMAP.md)** | 8 phases — wow-demo first, then breadth, then export, then desktop. |
-| **[STRATEGY.md](docs/STRATEGY.md)** | Licensing posture, contribution flow, and how the visualizer grows a music channel. |
+**Controls:** `O` open a song · `1`/`2`/`Tab` switch mode · `Space` pause ·
+`R` restart. With no song loaded, a built-in demo groove plays.
+
+## How it works
+
+```
+src/
+  main.rs          app shell: window, input, HUD, mode switching
+  audio.rs         playback + the master clock (rodio, with a silent fallback)
+  track.rs         decode to PCM + offline pre-analysis (beat grid, loudness)
+  analysis.rs      per-frame FFT features (32 log bands, bass/mid/treble, rms)
+  view.rs          fixed 16x9 world space, letterboxed; shared palette
+  modes/
+    mod.rs         the Mode trait — a mode is one file implementing it
+    breakout.rs    waveform-paddle breakout (rapier2d physics)
+    runner.rs      beat-synced T-Rex runner (ported kinematics, no physics dep)
+```
+
+The design that makes "the music plays the game" exact rather than reactive:
+tracks are **pre-analyzed offline at load** (a beat grid with strengths, plus a
+loudness curve at ~12 ms resolution), so modes can place things at *future*
+beats instead of guessing in realtime. Every mode reads one `FrameCtx` — the
+PCM window at the playhead, its spectral features, and that profile — and draws
+in a fixed 16:9 world space. Adding a mode is one file plus one line in
+`main.rs`.
+
+Stack: [macroquad](https://github.com/not-fl3/macroquad) (window + 2D),
+[rapier2d](https://rapier.rs) (physics), [rodio](https://github.com/RustAudio/rodio)
+(decode + playback), [realfft](https://github.com/HEnquist/realfft) (spectrum),
+[rfd](https://github.com/PolyMeilex/rfd) (native file dialog). All permissively
+licensed.
+
+## Roadmap
+
+The bigger vision — a large catalog of game/demo-inspired modes — lives in
+[docs/MODES.md](docs/MODES.md) (225 catalogued concepts with audio mappings and
+sources to adapt). The other docs in `docs/` are research from an earlier web
+prototype; the mode catalog and strategy remain the guiding documents, ported
+mode by mode into this native app.
+
+Headless capture for development/CI: `cherry --shot [breakout|runner]
+[--file song]` renders 180 frames on a silent fixed clock and writes a PNG.
 
 ## License
 
-Core: **MIT.** Non-permissive preset/shader content is optional, user-loaded, and never bundled.
-See [STRATEGY.md](docs/STRATEGY.md#licensing-posture).
+MIT. Runner kinematics ported from Chromium's T-Rex runner (BSD-style license,
+The Chromium Authors).

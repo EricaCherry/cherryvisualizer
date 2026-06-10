@@ -1,10 +1,12 @@
-# dependencies
-node_modules/
-.pnpm-store/
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
 
-# build output
-dist/
-*.tsbuildinfo
+# audio test files dropped into the repo while developing
+/samples/*.mp3
+/samples/*.wav
+/samples/*.flac
 
 # editor / os
 .DS_Store
@@ -15,7 +17,4 @@ dist/
 # env
 .env
 .env.local
-
-# misc
-coverage/
-tmp/
+/shot*.png
