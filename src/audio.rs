@@ -1,42 +1,37 @@
 //! Playback and the master clock.
 //!
-//! Two backends behind one interface so every mode syncs to the same clock:
-//!   - `Rodio`: audible playback; the clock is the player's real position.
-//!   - `Manual`: a silent fixed-step clock (used by `--shot` captures, or as a
-//!     graceful fallback when no audio device exists).
+//! The clock is a plain dt accumulator (`pos`), reset to 0 on load/restart and
+//! frozen while paused. rodio is used only to make sound — a FRESH player is
+//! created per track so playback always starts clean (rodio's `get_pos` is
+//! per-player state and does not reset across `stop`/`append`, which is exactly
+//! the trap that froze track-switching before). The visual clock being our own
+//! monotonic value means load, restart, pause and loop are all exact.
 
 use crate::track::Track;
 use std::num::NonZero;
 use std::path::Path;
 
-enum Backend {
-    Rodio {
-        /// Must stay alive for the duration of playback.
-        _out: rodio::MixerDeviceSink,
-        player: rodio::Player,
-    },
-    Manual {
-        pos: f32,
-    },
+struct Sound {
+    /// The device sink; must stay alive for the duration of playback.
+    out: rodio::MixerDeviceSink,
+    /// Current player. Replaced (and the old one dropped/stopped) on each start.
+    player: rodio::Player,
 }
 
 pub struct AudioEngine {
     track: Track,
-    backend: Backend,
+    sound: Option<Sound>,
+    /// Visual playhead in seconds — the single source of truth for all modes.
+    pos: f32,
     paused: bool,
 }
 
 impl AudioEngine {
-    /// `audible = false` skips the audio device entirely (headless captures).
+    /// `audible = false` skips the audio device (headless `--shot` captures).
     pub fn new(audible: bool) -> Self {
-        let track = Track::synth_demo();
-        let backend = if audible {
-            open_output().unwrap_or(Backend::Manual { pos: 0.0 })
-        } else {
-            Backend::Manual { pos: 0.0 }
-        };
-        let mut engine = AudioEngine { track, backend, paused: false };
-        engine.restart();
+        let sound = if audible { open_sound() } else { None };
+        let mut engine = AudioEngine { track: Track::synth_demo(), sound, pos: 0.0, paused: false };
+        engine.start_playback();
         engine
     }
 
@@ -49,59 +44,60 @@ impl AudioEngine {
     }
 
     pub fn is_audible(&self) -> bool {
-        matches!(self.backend, Backend::Rodio { .. })
+        self.sound.is_some()
     }
 
-    /// Current playhead in seconds.
+    pub fn is_paused(&self) -> bool {
+        self.paused
+    }
+
     pub fn position(&self) -> f32 {
-        match &self.backend {
-            Backend::Rodio { player, .. } => {
-                player.get_pos().as_secs_f32().min(self.duration())
-            }
-            Backend::Manual { pos } => *pos,
-        }
+        self.pos
     }
 
-    /// Advance the manual clock and loop at end of track.
+    /// Advance the clock and loop at end of track. No-op while paused.
     pub fn tick(&mut self, dt: f32) {
-        if let Backend::Manual { pos } = &mut self.backend {
-            if !self.paused {
-                *pos += dt;
-            }
+        if self.paused {
+            return;
         }
-        if self.position() >= self.duration() - 0.02 {
-            self.restart();
+        self.pos += dt;
+        if self.pos >= self.track.duration() {
+            self.pos = 0.0;
+            self.start_playback();
         }
     }
 
     pub fn toggle_pause(&mut self) {
-        self.paused = !self.paused;
-        if let Backend::Rodio { player, .. } = &self.backend {
-            if self.paused {
-                player.pause();
+        self.set_paused(!self.paused);
+    }
+
+    pub fn set_paused(&mut self, paused: bool) {
+        self.paused = paused;
+        if let Some(s) = &self.sound {
+            if paused {
+                s.player.pause();
             } else {
-                player.play();
+                s.player.play();
             }
         }
+    }
+
+    /// Install an already-decoded track (e.g. from a background loader thread)
+    /// and cue it from the top, honoring the current pause state.
+    pub fn set_track(&mut self, track: Track) {
+        self.track = track;
+        self.pos = 0.0;
+        self.start_playback();
     }
 
     /// Restart the current track from the top.
     pub fn restart(&mut self) {
-        match &mut self.backend {
-            Backend::Manual { pos } => *pos = 0.0,
-            Backend::Rodio { player, .. } => {
-                player.stop();
-                player.append(mono_source(&self.track));
-                if self.paused {
-                    player.pause();
-                } else {
-                    player.play();
-                }
-            }
-        }
+        self.pos = 0.0;
+        self.paused = false;
+        self.start_playback();
     }
 
-    /// Decode `path`, swap it in, and start playing it.
+    /// Decode `path`, swap it in, and play it from the top.
     pub fn load_file(&mut self, path: &Path) -> Result<(), String> {
         self.track = Track::from_file(path)?;
         self.restart();
@@ -109,8 +105,6 @@ impl AudioEngine {
     }
 
     pub fn status_line(&self) -> String {
-        let t = self.position();
-        let d = self.duration();
         let fmt = |s: f32| format!("{}:{:02}", (s / 60.0) as u32, (s % 60.0) as u32);
         let state = if self.paused {
             "paused"
@@ -119,14 +113,29 @@ impl AudioEngine {
         } else {
             "silent clock"
         };
-        format!("{}  ·  {} / {}  ·  {}", self.track.name, fmt(t), fmt(d), state)
+        format!("{}  ·  {} / {}  ·  {}", self.track.name, fmt(self.pos), fmt(self.duration()), state)
+    }
+
+    /// (Re)start audio output for the current track with a fresh player.
+    fn start_playback(&mut self) {
+        let source = mono_source(&self.track);
+        if let Some(s) = self.sound.as_mut() {
+            // A brand-new player guarantees a clean, playing state; assigning it
+            // drops the previous player, which stops its audio.
+            let player = rodio::Player::connect_new(s.out.mixer());
+            player.append(source);
+            if self.paused {
+                player.pause();
+            }
+            s.player = player;
+        }
     }
 }
 
-fn open_output() -> Option<Backend> {
+fn open_sound() -> Option<Sound> {
     let out = rodio::DeviceSinkBuilder::open_default_sink().ok()?;
     let player = rodio::Player::connect_new(out.mixer());
-    Some(Backend::Rodio { _out: out, player })
+    Some(Sound { out, player })
 }
 
 fn mono_source(track: &Track) -> rodio::buffer::SamplesBuffer {

@@ -198,7 +198,7 @@ impl Track {
             pcm.push((bass + arp + pad + hat).clamp(-1.0, 1.0));
         }
         let profile = Profile::analyze(&pcm, sr);
-        Track { name: "demo groove (press O to open a song)".into(), pcm, sr, profile }
+        Track { name: "demo groove".into(), pcm, sr, profile }
     }
 }
 

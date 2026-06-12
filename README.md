@@ -5,6 +5,8 @@
 Open a song. Pick a mode. Watch the music play it — no player, no controls,
 no install, no server. One double-clickable executable, written in Rust.
 
+![Main menu](docs/screenshots/menu-rust.png)
+
 | Waveform Breakout | Beat Surfer |
 |---|---|
 | ![Breakout](docs/screenshots/breakout-rust.png) | ![Surfer](docs/screenshots/surfer-rust.png) |
@@ -43,8 +45,13 @@ cargo run --release -- --file path\to\song.mp3
 The binary lands at `target/release/cherry.exe` — copy it anywhere and
 double-click it. Supports mp3, wav, flac, ogg, m4a.
 
-**Controls:** `O` open a song · `1`/`2`/`Tab` switch mode · `Space` pause ·
-`R` restart. With no song loaded, a built-in demo groove plays.
+Cherry opens to a **main menu**: pick a mode (Up/Down) and a track (`O` to open
+an audio file, or just play the built-in demo), then `Enter` to start. Opening a
+file decodes on a **background thread behind a loading bar**, so the window
+never freezes.
+
+**In a mode:** `Esc` back to menu · `1`/`2`/`Tab` switch mode · `Space` pause ·
+`R` restart.
 
 ## How it works
 
