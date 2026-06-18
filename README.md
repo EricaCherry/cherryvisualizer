@@ -156,10 +156,11 @@ sources to adapt). The other docs in `docs/` are research from an earlier web
 prototype; the mode catalog and strategy remain the guiding documents, ported
 mode by mode into this native app.
 
-Headless capture for development/CI: `cherry --shot <mode> [--file song]`
-renders 180 frames on a silent fixed clock and writes a PNG; `cherry
---export-frame <mode>` dumps one clean 1080p frame of a mode through the
-exporter (handy for docs and orientation checks).
+Headless tools for development/CI (`cherry --help` lists them all): `--shot
+<mode>` renders 180 frames on a silent fixed clock and writes a PNG;
+`--export-frame <mode>` dumps one clean 1080p frame through the exporter; and
+`--bench [mode]` times each mode's `update`+`draw` and prints a table, so visual
+and perf changes can be measured.
 
 ## License
 

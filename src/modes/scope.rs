@@ -82,8 +82,9 @@ impl Mode for Scope {
         let cy = AH * 0.46; // off dead-center; dark space above and below
         let amp = self.amp * (0.7 + feat.rms * 0.9);
 
-        // Dim reference line.
-        v.line(0.0, cy, AW, cy, 1.0, with_alpha(TEAL_DEEP, 0.45));
+        // Dim reference line — kept faint so it doesn't pull the eye back to
+        // center against the deliberately off-center band.
+        v.line(0.0, cy, AW, cy, 1.0, with_alpha(TEAL_DEEP, 0.25));
 
         let n = self.history.len().max(1);
         for (k, row) in self.history.iter().enumerate() {

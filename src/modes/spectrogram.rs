@@ -17,13 +17,16 @@ use crate::view::{View, AH, AW};
 
 pub struct Spectrogram {
     cols: std::collections::VecDeque<[f32; N_BANDS]>,
+    /// Slow per-band envelope — sustained energy settles here so only the
+    /// transient ABOVE it burns warm (keeps the ever-loud bass from amber).
+    env: [f32; N_BANDS],
     width: usize,
     gain: f32,
 }
 
 impl Spectrogram {
     pub fn new() -> Self {
-        Spectrogram { cols: std::collections::VecDeque::new(), width: 260, gain: 1.2 }
+        Spectrogram { cols: std::collections::VecDeque::new(), env: [0.0; N_BANDS], width: 260, gain: 1.2 }
     }
 }
 
@@ -62,13 +65,18 @@ impl Mode for Spectrogram {
 
     fn reset(&mut self, _track: &Track) {
         self.cols.clear();
+        self.env = [0.0; N_BANDS];
     }
 
     fn update(&mut self, ctx: &FrameCtx) {
         let mut col = [0.0f32; N_BANDS];
         for i in 0..N_BANDS {
             // ^1.4 pushes quiet bins down toward the ink floor (bimodal panel).
-            col[i] = (ctx.feat.bands[i] * self.gain).clamp(0.0, 1.0).powf(1.4);
+            let raw = (ctx.feat.bands[i] * self.gain).clamp(0.0, 1.0).powf(1.4);
+            // Show the level ABOVE a slow per-band envelope, so sustained loud
+            // bass settles to teal and only transient hits burn amber.
+            self.env[i] += (raw - self.env[i]) * 0.05;
+            col[i] = ((raw - 0.5 * self.env[i]).max(0.0) * 1.4).min(1.0);
         }
         self.cols.push_back(col);
         while self.cols.len() > self.width {
@@ -91,8 +99,12 @@ impl Mode for Spectrogram {
             // hotter so the warm leading band reads.
             let live = if (n - ci) as f32 <= 4.0 { 1.06 } else { 1.0 };
             for b in 0..N_BANDS {
+                let val = col[b] * jit * live;
+                if val < 0.02 {
+                    continue; // invisible (presence ~0) — skip the draw call
+                }
                 let y_top = (b + 1) as f32 * rh;
-                v.rect(x, y_top, cw + 0.01, rh + 0.01, heat(col[b] * jit * live));
+                v.rect(x, y_top, cw + 0.01, rh + 0.01, heat(val));
             }
         }
 

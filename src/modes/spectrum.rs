@@ -111,9 +111,7 @@ impl Mode for Spectrum {
         }
 
         // The hero is the single loudest band; only it is allowed to go warm.
-        let hero = (0..N_BANDS)
-            .max_by(|&a, &b| self.heights[a].partial_cmp(&self.heights[b]).unwrap_or(std::cmp::Ordering::Equal))
-            .unwrap_or(0);
+        let hero = (0..N_BANDS).max_by(|&a, &b| self.heights[a].total_cmp(&self.heights[b])).unwrap_or(0);
 
         let base = AH * 0.42; // off-center baseline -> asymmetric negative space
         let max_h = AH * 0.52;

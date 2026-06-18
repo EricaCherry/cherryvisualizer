@@ -24,7 +24,7 @@ use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use egui_macroquad::egui;
 use macroquad::prelude::*;
 
-use analysis::Analyser;
+use analysis::{features_at, Analyser, FFT_LEN};
 use audio::AudioEngine;
 use export::{ExportSettings, Exporter};
 use modes::breakout::Breakout;
@@ -36,22 +36,25 @@ use modes::surfer::Surfer;
 use modes::{FrameCtx, Mode, Param, ParamKind};
 use track::Track;
 
-const FFT_LEN: usize = 2048;
 const SHOT_FRAMES: u32 = 180;
-const MODE_COUNT: usize = 6;
 
-/// Build a fresh instance of mode `i`. Used both to populate the live picker
-/// and to give the exporter its own untouched copy of the selected mode.
+/// The mode registry — the single source of truth for the picker, the factory,
+/// and `MODE_COUNT`. Add a mode here (plus its `mod` line) and it appears
+/// everywhere; nothing else to keep in sync.
+const MODES: [fn() -> Box<dyn Mode>; 6] = [
+    || Box::new(Breakout::new()),
+    || Box::new(Spectrum::new()),
+    || Box::new(Scope::new()),
+    || Box::new(Spectrogram::new()),
+    || Box::new(Starfield::new()),
+    || Box::new(Surfer::new()),
+];
+const MODE_COUNT: usize = MODES.len();
+
+/// Build a fresh instance of mode `i` (clamped). Used both to populate the live
+/// picker and to give the exporter its own untouched copy of the selected mode.
 fn make_mode(i: usize) -> Box<dyn Mode> {
-    match i {
-        0 => Box::new(Breakout::new()),
-        1 => Box::new(Spectrum::new()),
-        2 => Box::new(Scope::new()),
-        3 => Box::new(Spectrogram::new()),
-        4 => Box::new(Starfield::new()),
-        5 => Box::new(Surfer::new()),
-        _ => Box::new(Breakout::new()),
-    }
+    MODES[i.min(MODE_COUNT - 1)]()
 }
 
 /// Map a resolution shorthand (720/1080/1440/2160) + fps to export settings.
@@ -122,10 +125,33 @@ fn parse_args() -> Args {
             }
             "--res" => out.res = it.next().and_then(|v| v.parse().ok()),
             "--fps" => out.fps = it.next().and_then(|v| v.parse().ok()),
+            "--help" | "-h" => {
+                print_help();
+                std::process::exit(0);
+            }
+            other if other.starts_with('-') => {
+                eprintln!("cherry: unknown flag '{other}' (try --help)");
+            }
             _ => {}
         }
     }
     out
+}
+
+fn print_help() {
+    println!("Cherry — a native music visualizer where the audio plays the game.\n");
+    println!("USAGE:\n  cherry [--file <audio>]            launch the desktop app\n");
+    println!("OPTIONS:");
+    println!("  --file <path>            open an audio file (mp3/wav/flac/ogg/m4a)");
+    println!("  --export <out.mp4>       render the selected mode to a video, then exit");
+    println!("  --export-frame <mode>    dump one 1080p PNG of <mode>, then exit");
+    println!("  --bench [mode]           time update+draw per mode, print a table, exit");
+    println!("  --shot <mode|ui>         render a headless PNG (dev), then exit");
+    println!("  --gen-wav <path>         write a small test WAV, then exit");
+    println!("  --res <720|1080|1440>    export/preview resolution (default 1080)");
+    println!("  --fps <30|60>            export/preview frame rate (default 60)");
+    println!("  --help, -h               show this help");
+    println!("\nModes: breakout, spectrum, oscilloscope, spectrogram, starfield, surfer");
 }
 
 enum LoadResult {
@@ -224,6 +250,9 @@ struct UiState {
     sidebar: bool,
     export_res: u32,
     export_fps: u32,
+    /// A transient top-of-screen toast (message, seconds left) for errors that
+    /// would otherwise only hit stderr (file-open / export failures).
+    banner: Option<(String, f32)>,
 }
 
 fn fmt_time(s: f32) -> String {
@@ -288,6 +317,7 @@ async fn main() {
         sidebar: true,
         export_res: 1080,
         export_fps: 60,
+        banner: None,
     };
 
     // ---- headless CLI: per-mode CPU cost of update()+draw() ----------------
@@ -311,9 +341,7 @@ async fn main() {
             let mut draws: Vec<f64> = Vec::with_capacity(frames as usize);
             for f in 0..frames + warmup {
                 let t = f as f32 * dt;
-                audio.track().window_at(t, &mut window);
-                let mut feat = analyser.analyze(&window, audio.track().sr, dt);
-                feat.beat = audio.track().profile.beat_in((t - dt).max(0.0), t);
+                let feat = features_at(&mut analyser, audio.track(), &mut window, t, (t - dt).max(0.0), dt);
                 let ctx = FrameCtx { wave: &window, feat: &feat, track: audio.track(), time: t, dt };
                 let t0 = std::time::Instant::now();
                 modes[mi].update(&ctx);
@@ -329,8 +357,11 @@ async fn main() {
             let n = draws.len().max(1) as f64;
             let upd_m = upd_sum / n;
             let draw_m = draws.iter().sum::<f64>() / n;
-            draws.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-            let p95 = draws[((draws.len() as f64 * 0.95) as usize).min(draws.len() - 1)];
+            draws.sort_by(|a, b| a.total_cmp(b));
+            let p95 = draws
+                .get(((draws.len() as f64 * 0.95) as usize).min(draws.len().saturating_sub(1)))
+                .copied()
+                .unwrap_or(0.0);
             let total = (upd_m + draw_m).max(1e-3);
             println!(
                 "{:<14}{:>10.3}{:>10.3}{:>10.3}{:>9.0}",
@@ -405,6 +436,7 @@ async fn main() {
                 }
                 Ok(LoadResult::Failed(e)) => {
                     eprintln!("could not open file: {e}");
+                    ui.banner = Some((format!("Couldn't open file: {e}"), 6.0));
                     loading = None;
                 }
                 Ok(LoadResult::Cancelled) => loading = None,
@@ -430,7 +462,10 @@ async fn main() {
                             audio.set_paused(true);
                             export_status = "Rendering…".into();
                         }
-                        Err(e) => export_status = format!("Export failed: {e}"),
+                        Err(e) => {
+                            ui.banner = Some((format!("Export failed: {e}"), 7.0));
+                            export_status = format!("Export failed: {e}");
+                        }
                     }
                     save_dialog = None;
                 }
@@ -441,6 +476,14 @@ async fn main() {
                 }
                 Err(TryRecvError::Disconnected) => save_dialog = None,
                 Err(TryRecvError::Empty) => {}
+            }
+        }
+
+        // Age out the transient error toast.
+        if let Some((_, ttl)) = &mut ui.banner {
+            *ttl -= dt;
+            if *ttl <= 0.0 {
+                ui.banner = None;
             }
         }
 
@@ -542,6 +585,7 @@ async fn main() {
                     audio.set_paused(false);
                 }
                 Some(Err(e)) => {
+                    ui.banner = Some((format!("Export failed: {e}"), 7.0));
                     export_status = format!("Export failed: {e}");
                     exporter = None;
                     audio.set_paused(false);
@@ -559,13 +603,12 @@ async fn main() {
         } else {
             audio.tick(dt);
             let t = audio.position();
-            audio.track().window_at(t, &mut window);
-            let mut feat = analyser.analyze(&window, audio.track().sr, dt);
+            // Rewind guard stays at the call site (it resets the mode on loop).
             if t < last_t {
                 last_t = 0.0;
                 modes[sel].reset(audio.track());
             }
-            feat.beat = audio.track().profile.beat_in(last_t, t);
+            let feat = features_at(&mut analyser, audio.track(), &mut window, t, last_t, dt);
             last_t = t;
 
             let ctx = FrameCtx { wave: &window, feat: &feat, track: audio.track(), time: t, dt };
@@ -651,7 +694,13 @@ fn build_ui(ctx: &egui::Context, data: &UiData, ui: &mut UiState, actions: &mut 
                 }
             });
             bar.with_layout(egui::Layout::right_to_left(egui::Align::Center), |r| {
-                r.label(egui::RichText::new(format!("{} fps", data.fps)).weak());
+                // Surface export progress everywhere, not just on the Export tab.
+                if data.exporting {
+                    r.add(egui::ProgressBar::new(data.export_progress).desired_width(120.0).show_percentage());
+                    r.label(egui::RichText::new("Exporting").strong());
+                } else {
+                    r.label(egui::RichText::new(format!("{} fps", data.fps)).weak());
+                }
             });
         });
     });
@@ -700,6 +749,12 @@ fn build_ui(ctx: &egui::Context, data: &UiData, ui: &mut UiState, actions: &mut 
             .resizable(true)
             .default_width(290.0)
             .min_width(220.0)
+            // Slightly translucent so the full-frame visual reads through the
+            // chrome instead of looking hard-cropped on the left.
+            .frame(
+                egui::Frame::side_top_panel(&ctx.style())
+                    .fill(egui::Color32::from_rgba_unmultiplied(15, 21, 26, 206)),
+            )
             .show(ctx, |s| {
                 s.add_space(4.0);
                 s.horizontal_wrapped(|tabs| {
@@ -736,7 +791,11 @@ fn build_ui(ctx: &egui::Context, data: &UiData, ui: &mut UiState, actions: &mut 
             w.label("A native, open-source music visualizer the song plays.");
             w.add_space(6.0);
             w.label("Open a track, pick a mode, and the audio plays the game.");
-            w.add_space(6.0);
+            w.add_space(8.0);
+            w.label(egui::RichText::new("Shortcuts").strong());
+            w.label(egui::RichText::new("Space  play/pause   ·   Tab  next mode").weak());
+            w.label(egui::RichText::new("R  restart   ·   F  fullscreen").weak());
+            w.add_space(8.0);
             w.label(egui::RichText::new("MIT licensed · built with macroquad + egui").weak());
         });
     ui.about_open = about_open;
@@ -752,6 +811,17 @@ fn build_ui(ctx: &egui::Context, data: &UiData, ui: &mut UiState, actions: &mut 
                     h.spinner();
                     h.label("Loading…");
                 });
+            });
+    }
+
+    // ---- transient error toast --------------------------------------------
+    if let Some((msg, _)) = &ui.banner {
+        egui::Window::new("cherry_banner")
+            .title_bar(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_TOP, [0.0, 44.0])
+            .show(ctx, |w| {
+                w.label(egui::RichText::new(msg).strong().color(egui::Color32::from_rgb(240, 180, 120)));
             });
     }
 }
@@ -818,6 +888,8 @@ fn tab_export(ui: &mut egui::Ui, st: &mut UiState, data: &UiData, actions: &mut 
             .weak()
             .small(),
     );
+    ui.add_space(8.0);
+    ui.label(format!("Mode:  {}", data.modes.get(data.sel).map(|m| m.0).unwrap_or("?")));
     ui.add_space(10.0);
 
     ui.add_enabled_ui(!data.exporting, |ui| {

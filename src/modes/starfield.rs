@@ -153,7 +153,7 @@ impl Mode for Starfield {
             .iter()
             .enumerate()
             .filter(|(_, s)| s.z > NEAR * 0.5)
-            .min_by(|(_, a), (_, b)| a.z.partial_cmp(&b.z).unwrap_or(std::cmp::Ordering::Equal))
+            .min_by(|(_, a), (_, b)| a.z.total_cmp(&b.z))
             .map(|(i, _)| i);
 
         // Beats let a few more stars warm; otherwise the field stays cool and

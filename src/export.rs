@@ -17,12 +17,10 @@ use std::time::Instant;
 
 use macroquad::prelude::*;
 
-use crate::analysis::Analyser;
+use crate::analysis::{features_at, Analyser, FFT_LEN};
 use crate::modes::{FrameCtx, Mode};
 use crate::track::Track;
 use crate::view;
-
-const FFT_LEN: usize = 2048;
 
 #[derive(Clone, Copy)]
 pub struct ExportSettings {
@@ -48,6 +46,7 @@ pub struct Exporter {
     result_rx: Receiver<Result<(), String>>,
     out_path: PathBuf,
     audio_path: PathBuf,
+    log_path: PathBuf,
     finishing: bool,
 }
 
@@ -64,11 +63,15 @@ impl Exporter {
         let audio_path = std::env::temp_dir().join("cherry-export-audio.wav");
         write_wav(&audio_path, &track.pcm, track.sr).map_err(|e| format!("audio temp file: {e}"))?;
 
-        let mut child = spawn_ffmpeg(&settings, &audio_path, &out_path)?;
+        // ffmpeg's stderr goes to a log file (no pipe-fill deadlock); on failure
+        // the encoder thread reads its tail so the error names the real reason.
+        let log_path = std::env::temp_dir().join("cherry-export-ffmpeg.log");
+        let mut child = spawn_ffmpeg(&settings, &audio_path, &out_path, &log_path)?;
         let mut stdin = child.stdin.take().ok_or("ffmpeg stdin unavailable")?;
 
         let (tx, rx) = sync_channel::<Msg>(3);
         let (result_tx, result_rx) = channel();
+        let log_for_thread = log_path.clone();
         std::thread::spawn(move || {
             let mut err = None;
             while let Ok(Msg::Frame(bytes)) = rx.recv() {
@@ -81,7 +84,7 @@ impl Exporter {
             let res = match (err, child.wait()) {
                 (Some(e), _) => Err(e),
                 (None, Ok(s)) if s.success() => Ok(()),
-                (None, Ok(s)) => Err(format!("ffmpeg exited with {s}")),
+                (None, Ok(s)) => Err(format!("ffmpeg exited with {s}{}", ffmpeg_tail(&log_for_thread))),
                 (None, Err(e)) => Err(format!("ffmpeg wait failed: {e}")),
             };
             let _ = result_tx.send(res);
@@ -105,6 +108,7 @@ impl Exporter {
             result_rx,
             out_path,
             audio_path,
+            log_path,
             finishing: false,
         })
     }
@@ -158,48 +162,47 @@ impl Exporter {
         let fps = self.settings.fps as f32;
         let dt = 1.0 / fps;
         let t = i as f32 / fps;
-        let prev_t = if i == 0 { 0.0 } else { (i - 1) as f32 / fps };
-
-        track.window_at(t, &mut self.window);
-        let mut feat = self.analyser.analyze(&self.window, track.sr, dt);
-        feat.beat = track.profile.beat_in(prev_t, t);
+        // Negative for i==0 so beat_in's half-open (prev, t] still covers a t=0 hit.
+        let prev_t = (i as f32 - 1.0) / fps;
+        let feat = features_at(&mut self.analyser, track, &mut self.window, t, prev_t, dt);
         let ctx = FrameCtx { wave: &self.window, feat: &feat, track, time: t, dt };
 
         let (w, h) = (self.settings.width as f32, self.settings.height as f32);
-        view::set_render_size(Some((w, h)));
-        view::set_export_target(Some(self.rt.clone()));
-        view::apply_screen_camera();
-        self.mode.update(&ctx);
-        self.mode.draw(&ctx);
-        set_default_camera();
-        view::set_export_target(None);
-        view::set_render_size(None);
+        render_mode_into(&self.rt, w, h, self.mode.as_mut(), &ctx);
 
-        // get_texture_data() returns rows bottom-up (GL order); ffmpeg's
-        // rawvideo demuxer wants top-down, so flip. (Image::export_png flips
-        // internally, which is why a saved PNG looks upright without this.)
-        let img = self.rt.texture.get_texture_data();
-        flip_vertical(img.bytes, img.width as usize, img.height as usize)
+        // get_texture_data() returns rows bottom-up (GL order); ffmpeg flips it
+        // back top-down with `-vf vflip`, so no CPU copy here.
+        self.rt.texture.get_texture_data().bytes
     }
 }
 
-fn flip_vertical(bytes: Vec<u8>, w: usize, h: usize) -> Vec<u8> {
-    let stride = w * 4;
-    if stride == 0 || bytes.len() < stride * h {
-        return bytes;
-    }
-    let mut out = vec![0u8; stride * h];
-    for y in 0..h {
-        let src = (h - 1 - y) * stride;
-        let dst = y * stride;
-        out[dst..dst + stride].copy_from_slice(&bytes[src..src + stride]);
-    }
-    out
+/// Render one frame of `mode` into the export target `rt` at logical size
+/// `(w, h)`. This holds the exporter's camera contract in ONE place: point the
+/// View at the offscreen target, draw, then clear it so live play is never left
+/// rendering offscreen.
+fn render_mode_into(rt: &RenderTarget, w: f32, h: f32, mode: &mut dyn Mode, ctx: &FrameCtx) {
+    view::set_render_size(Some((w, h)));
+    view::set_export_target(Some(rt.clone()));
+    view::apply_screen_camera();
+    mode.update(ctx);
+    mode.draw(ctx);
+    set_default_camera();
+    view::set_export_target(None);
+    view::set_render_size(None);
+}
+
+/// The last few lines of ffmpeg's log, for a useful failure message.
+fn ffmpeg_tail(path: &Path) -> String {
+    let Ok(s) = std::fs::read_to_string(path) else { return String::new() };
+    let lines: Vec<&str> = s.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    let tail = lines.iter().rev().take(3).rev().copied().collect::<Vec<_>>().join(" | ");
+    if tail.is_empty() { String::new() } else { format!(" — {tail}") }
 }
 
 impl Drop for Exporter {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.audio_path);
+        let _ = std::fs::remove_file(&self.log_path);
     }
 }
 
@@ -218,39 +221,32 @@ pub fn render_preview(settings: ExportSettings, mut mode: Box<dyn Mode>, track: 
     for i in 0..=frame {
         let dt = 1.0 / fps;
         let t = i as f32 / fps;
-        let prev_t = if i == 0 { 0.0 } else { (i - 1) as f32 / fps };
-        track.window_at(t, &mut window);
-        let mut feat = analyser.analyze(&window, track.sr, dt);
-        feat.beat = track.profile.beat_in(prev_t, t);
+        let prev_t = (i as f32 - 1.0) / fps;
+        let feat = features_at(&mut analyser, track, &mut window, t, prev_t, dt);
         let ctx = FrameCtx { wave: &window, feat: &feat, track, time: t, dt };
-
-        view::set_render_size(Some((w, h)));
-        view::set_export_target(Some(rt.clone()));
-        view::apply_screen_camera();
-        mode.update(&ctx);
-        mode.draw(&ctx);
-        set_default_camera();
-        view::set_export_target(None);
-        view::set_render_size(None);
+        render_mode_into(&rt, w, h, mode.as_mut(), &ctx);
     }
     rt.texture.get_texture_data()
 }
 
-fn spawn_ffmpeg(s: &ExportSettings, audio: &Path, out: &Path) -> Result<Child, String> {
+fn spawn_ffmpeg(s: &ExportSettings, audio: &Path, out: &Path, log: &Path) -> Result<Child, String> {
     let size = format!("{}x{}", s.width, s.height);
     let fps = s.fps.to_string();
+    let logf = std::fs::File::create(log).map_err(|e| format!("ffmpeg log file: {e}"))?;
     Command::new("ffmpeg")
         .args(["-y", "-f", "rawvideo", "-pix_fmt", "rgba", "-s", &size, "-r", &fps, "-i", "-"])
         .arg("-i")
         .arg(audio)
         .args([
+            // GL render targets read back bottom-up; flip on the encoder side.
+            "-vf", "vflip",
             "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "medium", "-crf", "18",
             "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-shortest",
         ])
         .arg(out)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::from(logf))
         .spawn()
         .map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {

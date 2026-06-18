@@ -25,7 +25,7 @@
 use macroquad::prelude::*;
 
 use crate::modes::{FrameCtx, Mode};
-use crate::style::{self, AMBER, AMBER_GLOW, SPEC, TEAL};
+use crate::style::{self, hash01, AMBER, AMBER_GLOW, SPEC, TEAL};
 use crate::track::Track;
 use crate::view;
 
@@ -156,13 +156,6 @@ impl Surfer {
         }
         (JUMP_V0 * a - 0.5 * JUMP_G * a * a).max(0.0)
     }
-}
-
-// Tiny deterministic hash -> 0..1, for seeded scenery.
-fn hash01(n: i32) -> f32 {
-    let mut x = n.wrapping_mul(374761393).wrapping_add(668265263) as u32;
-    x = (x ^ (x >> 13)).wrapping_mul(1274126177);
-    ((x ^ (x >> 16)) & 0xffff) as f32 / 65535.0
 }
 
 /// Distance fog: exponential-squared lerp toward the horizon color (softer
@@ -351,13 +344,15 @@ impl Mode for Surfer {
             draw_rectangle(0.0, horizon_y * k, sw, horizon_y / strips as f32 + 1.0, c);
         }
         // Stars twinkle with the treble layer, gathered in two loose drifts.
+        // Size scales with the frame so they stay point-sized in HD exports.
+        let star_px = (sh / 760.0 * 2.0).max(1.5);
         for i in 0..54 {
             let cx = if hash01(i * 7) < 0.66 { sw * 0.22 } else { sw * 0.72 };
             let x = cx + (hash01(i * 3 + 1) - 0.5) * sw * 0.5;
             let y = hash01(i * 3 + 2) * horizon_y * 0.8;
             let tw = 0.5 + 0.5 * ((t * (1.0 + hash01(i) * 3.0) + i as f32).sin());
             let a = (0.08 + 0.32 * feat.treble) * tw;
-            draw_rectangle(x, y, 2.0, 2.0, Color::new(SPEC.r, SPEC.g, SPEC.b, a));
+            draw_rectangle(x, y, star_px, star_px, Color::new(SPEC.r, SPEC.g, SPEC.b, a));
         }
         // The sun swells with bass — off-center, warm amber, with a cream core
         // so it reads as the one light source / hero of the frame.

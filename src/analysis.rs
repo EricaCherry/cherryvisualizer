@@ -8,7 +8,29 @@ use realfft::{RealFftPlanner, RealToComplex};
 use rustfft::num_complex::Complex;
 use std::sync::Arc;
 
+use crate::track::Track;
+
 pub const N_BANDS: usize = 32;
+/// FFT window length, shared by every render path (live, export, bench) so they
+/// never diverge in spectral content.
+pub const FFT_LEN: usize = 2048;
+
+/// Build the per-frame [`Features`] at time `t`: copy the PCM window, run the
+/// FFT, and fill in the beat from the offline grid (first beat in `(prev_t, t]`).
+/// One recipe for every render path.
+pub fn features_at(
+    analyser: &mut Analyser,
+    track: &Track,
+    window: &mut [f32],
+    t: f32,
+    prev_t: f32,
+    dt: f32,
+) -> Features {
+    track.window_at(t, window);
+    let mut feat = analyser.analyze(window, track.sr, dt);
+    feat.beat = track.profile.beat_in(prev_t, t);
+    feat
+}
 
 /// What every mode reads, every frame.
 #[derive(Clone, Default)]

@@ -18,7 +18,7 @@ use std::sync::mpsc::{channel, Receiver};
 
 use crate::analysis::N_BANDS;
 use crate::modes::{FrameCtx, Mode, Param};
-use crate::style::{self, mix, with_alpha, AMBER, AMBER_GLOW, SLATE, SPEC, TEAL, TEAL_DEEP};
+use crate::style::{self, hash01, mix, with_alpha, AMBER, AMBER_GLOW, SLATE, SPEC, TEAL, TEAL_DEEP};
 use crate::track::Track;
 use crate::view::{View, AH, AW};
 
@@ -101,12 +101,6 @@ pub struct Breakout {
     paddle_flash: f32,
     boost: f32,
     score: u32,
-}
-
-fn hash01(n: i32) -> f32 {
-    let mut x = n.wrapping_mul(374761393).wrapping_add(668265263) as u32;
-    x = (x ^ (x >> 13)).wrapping_mul(1274126177);
-    ((x ^ (x >> 16)) & 0xffff) as f32 / 65535.0
 }
 
 impl Breakout {
@@ -282,10 +276,13 @@ impl Breakout {
     /// real oscilloscope shape (heavy averaging flattens it to nothing), and a
     /// per-point temporal ease removes the frame-to-frame jitter so it flows.
     /// Amplitude pulses with loudness.
-    fn reshape_paddle(&mut self, wave: &[f32], rms: f32, dt: f32) {
+    /// Returns the largest point movement this frame, so the caller can skip
+    /// rebuilding the collider when the surface is effectively still.
+    fn reshape_paddle(&mut self, wave: &[f32], rms: f32, dt: f32) -> f32 {
         let n = wave.len().max(1);
         let amp = self.paddle_amp * (0.55 + rms * 1.6); // pulses with loudness
         let st = (dt * 11.0).min(1.0); // responsive enough to keep shape
+        let mut moved = 0.0f32;
         for i in 0..WAVE_PTS {
             let f = i as f32 / (WAVE_PTS - 1) as f32;
             let center = (f * (n - 1) as f32) as usize;
@@ -297,9 +294,12 @@ impl Breakout {
             }
             let sample = s / (hi - lo + 1) as f32;
             let target = (PADDLE_BASE_Y + sample * amp).max(PADDLE_FLOOR);
-            self.paddle_y[i] += (target - self.paddle_y[i]) * st;
+            let delta = (target - self.paddle_y[i]) * st;
+            self.paddle_y[i] += delta;
+            moved = moved.max(delta.abs());
             self.paddle_world[i] = (f * AW, self.paddle_y[i]);
         }
+        moved
     }
 }
 
@@ -380,11 +380,15 @@ impl Mode for Breakout {
         self.paddle_flash = (self.paddle_flash - dt * 4.0).max(0.0);
         self.boost += (1.0 - self.boost) * (dt * 3.0).min(1.0);
 
-        // 1) Smoothed, pulsing waveform paddle.
-        self.reshape_paddle(ctx.wave, feat.rms, dt);
-        let verts: Vec<Vector> = self.paddle_world.iter().map(|&(x, y)| Vector::new(x, y)).collect();
-        if let Some(c) = self.colliders.get_mut(self.paddle) {
-            c.set_shape(SharedShape::polyline(verts, None));
+        // 1) Smoothed, pulsing waveform paddle. Rebuilding the polyline collider
+        //    rebuilds its whole BVH (the bulk of update()), so only do it when
+        //    the surface actually moved enough to change a bounce.
+        let moved = self.reshape_paddle(ctx.wave, feat.rms, dt);
+        if moved > 0.005 {
+            let verts: Vec<Vector> = self.paddle_world.iter().map(|&(x, y)| Vector::new(x, y)).collect();
+            if let Some(c) = self.colliders.get_mut(self.paddle) {
+                c.set_shape(SharedShape::polyline(verts, None));
+            }
         }
 
         // 2) Step physics (no gravity — straight-line reflection).
