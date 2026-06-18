@@ -18,7 +18,7 @@ use std::sync::mpsc::{channel, Receiver};
 
 use crate::analysis::N_BANDS;
 use crate::modes::{FrameCtx, Mode, Param};
-use crate::style::{self, amber, amber_glow, hash01, mix, slate, spec, teal, teal_deep, with_alpha};
+use crate::style::{self, amber, hash01, mix, slate, spec, teal, teal_deep, with_alpha};
 use crate::track::Track;
 use crate::view::{View, AH, AW};
 
@@ -312,6 +312,10 @@ impl Mode for Breakout {
         "Breakout with no player — the waveform is the paddle. The spectrum builds the wall."
     }
 
+    fn trail(&self) -> f32 {
+        0.16
+    }
+
     fn params(&self) -> Vec<Param> {
         vec![
             Param::float("Ball speed", self.ball_speed, 1.5, 9.0),
@@ -489,7 +493,6 @@ impl Mode for Breakout {
 
     fn draw(&self, ctx: &FrameCtx) {
         let v = View::fit_world(AW, AH);
-        style::backdrop();
         let feat = ctx.feat;
 
         // Dust: two loose vertical drifts (not a band, not a grid), lit by treble.
@@ -527,11 +530,7 @@ impl Mode for Breakout {
             v.rect(s.x, s.y, s.w * a, s.w * a, with_alpha(s.color, a));
         }
 
-        // Ball trail: a warm echo of the hero.
-        for (i, &(x, y)) in self.trail.iter().enumerate() {
-            let a = i as f32 / self.trail.len().max(1) as f32 * 0.30;
-            v.circle(x, y, BALL_R * (0.35 + 0.45 * a), with_alpha(amber_glow(), a));
-        }
+        // (The ball's trail is now the feedback buffer's job — see postfx.)
 
         // Waveform paddle: one crisp teal crest over a thin shadow and a short
         // under-band. Flash/beat tints it warm. No stacked glow.
@@ -554,7 +553,5 @@ impl Mode for Breakout {
         // Ball: the single hero.
         let pos = self.bodies[self.ball].translation();
         style::glow_core(&v, pos.x, pos.y, BALL_R, amber());
-
-        style::finish(ctx.time);
     }
 }

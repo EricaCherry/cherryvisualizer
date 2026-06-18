@@ -11,7 +11,7 @@ use std::collections::VecDeque;
 use macroquad::prelude::*;
 
 use crate::modes::{FrameCtx, Mode, Param};
-use crate::style::{self, amber, mix, smoothstep, teal, teal_deep, with_alpha};
+use crate::style::{amber, mix, smoothstep, teal, teal_deep, with_alpha};
 use crate::track::Track;
 use crate::view::{View, AH, AW};
 
@@ -49,6 +49,10 @@ impl Mode for Scope {
         "A phosphor scope trace — one teal line whose loud crests glow amber."
     }
 
+    fn trail(&self) -> f32 {
+        0.12
+    }
+
     fn params(&self) -> Vec<Param> {
         vec![
             Param::float("Amplitude", self.amp, 0.5, 5.0),
@@ -77,7 +81,6 @@ impl Mode for Scope {
 
     fn draw(&self, ctx: &FrameCtx) {
         let v = View::fit_world(AW, AH);
-        style::backdrop();
         let feat = ctx.feat;
         let cy = AH * 0.46; // off dead-center; dark space above and below
         let amp = self.amp * (0.7 + feat.rms * 0.9);
@@ -105,7 +108,5 @@ impl Mode for Scope {
                 v.line(x0, y0, x1, y1, width, with_alpha(c, fade));
             }
         }
-
-        style::finish(ctx.time);
     }
 }

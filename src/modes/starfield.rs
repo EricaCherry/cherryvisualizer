@@ -95,6 +95,10 @@ impl Mode for Starfield {
         "Warp through stars; loudness sets the speed and beats punch into hyperspace."
     }
 
+    fn trail(&self) -> f32 {
+        0.18
+    }
+
     fn params(&self) -> Vec<Param> {
         vec![
             Param::int("Stars", self.count as i32, 60, 700),
@@ -142,7 +146,6 @@ impl Mode for Starfield {
 
     fn draw(&self, ctx: &FrameCtx) {
         let v = View::fit_world(AW, AH);
-        style::backdrop();
         // The streak length grows with warp so beats feel like a punch; a small
         // floor keeps a hint of motion even in a still frame.
         let streak = (0.05 + self.warp * 0.9) * self.speed * ctx.dt;
@@ -180,7 +183,5 @@ impl Mode for Starfield {
                 v.circle(px, py, r, with_alpha(c, bright));
             }
         }
-
-        style::finish(ctx.time);
     }
 }

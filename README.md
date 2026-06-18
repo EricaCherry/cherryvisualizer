@@ -24,6 +24,12 @@ the whole frame is finished with a graded backdrop, a soft vignette, and fine
 film grain. No rainbow ramps, no neon — it's graded like one photographed frame,
 not six screensavers.
 
+Motion comes from a **feedback buffer**: each frame decays toward the backdrop
+before the new frame is drawn, so moving elements leave echo trails — the ball
+becomes an amber comet, the scope gains phosphor persistence, the starfield
+warps into a hyperspace tunnel. (The waterfall and the 3D runner opt out, where
+trails would smear the time axis or the depth.)
+
 ### Themes
 
 That art direction is **theme-driven**: the eight palette *roles* are fixed, but
@@ -125,8 +131,9 @@ src/
   analysis.rs      per-frame FFT features (32 log bands, bass/mid/treble, rms)
   view.rs          world space -> letterboxed viewport + the offscreen-render
                    plumbing the exporter uses
-  style.rs         the shared art direction: palette, energy->color grade,
-                   graded backdrop, vignette + film-grain finish
+  style.rs         the shared art direction: themes/palette, energy->color
+                   grade, graded backdrop, vignette + film-grain finish
+  postfx.rs        the "alive" feedback pipeline (decaying echo trails)
   export.rs        offscreen render -> raw frames -> ffmpeg -> MP4 (+ audio mux)
   modes/
     mod.rs         the Mode trait + the Param settings system

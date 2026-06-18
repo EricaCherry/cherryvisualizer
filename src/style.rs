@@ -203,14 +203,25 @@ fn invalidate_baked() {
 /// Modes call this instead of `clear_background`.
 pub fn backdrop() {
     clear_background(ink());
-    let tex = BACKDROP.with(|c| {
+    backdrop_blend(1.0);
+}
+
+fn backdrop_tex() -> Texture2D {
+    BACKDROP.with(|c| {
         if c.borrow().is_none() {
             *c.borrow_mut() = Some(build_backdrop());
         }
         c.borrow().as_ref().unwrap().clone()
-    });
+    })
+}
+
+/// Draw the backdrop gradient at `alpha` over the current target *without*
+/// clearing — the feedback buffer uses this to decay old frames toward the floor
+/// each frame, which is what leaves motion trails.
+pub fn backdrop_blend(alpha: f32) {
+    let tex = backdrop_tex();
     let (w, h) = (view::screen_w(), view::screen_h());
-    draw_texture_ex(&tex, 0.0, 0.0, WHITE, DrawTextureParams { dest_size: Some(vec2(w, h)), ..Default::default() });
+    draw_texture_ex(&tex, 0.0, 0.0, with_alpha(WHITE, alpha), DrawTextureParams { dest_size: Some(vec2(w, h)), ..Default::default() });
 }
 
 /// The shared filmic finish: a soft vignette then fine animated grain. Called

@@ -84,9 +84,8 @@ impl Mode for Spectrogram {
         }
     }
 
-    fn draw(&self, ctx: &FrameCtx) {
+    fn draw(&self, _ctx: &FrameCtx) {
         let v = View::fit_world(AW, AH);
-        style::backdrop(); // graded floor + key pool shows through the quiet bins
 
         let cw = AW / self.width as f32;
         let rh = AH / N_BANDS as f32;
@@ -107,7 +106,5 @@ impl Mode for Spectrogram {
                 v.rect(x, y_top, cw + 0.01, rh + 0.01, heat(val));
             }
         }
-
-        style::finish(ctx.time);
     }
 }

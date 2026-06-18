@@ -11,7 +11,7 @@ use macroquad::prelude::*;
 
 use crate::analysis::N_BANDS;
 use crate::modes::{FrameCtx, Mode, Param};
-use crate::style::{self, amber, hash01, mix, smoothstep, spec, teal, teal_deep, with_alpha};
+use crate::style::{amber, hash01, mix, smoothstep, spec, teal, teal_deep, with_alpha};
 use crate::track::Track;
 use crate::view::{View, AH, AW};
 
@@ -47,6 +47,10 @@ impl Mode for Spectrum {
 
     fn about(&self) -> &'static str {
         "Frequency bars graded by energy — a cool field with one warm hero band."
+    }
+
+    fn trail(&self) -> f32 {
+        0.10
     }
 
     fn params(&self) -> Vec<Param> {
@@ -101,9 +105,8 @@ impl Mode for Spectrum {
         }
     }
 
-    fn draw(&self, ctx: &FrameCtx) {
+    fn draw(&self, _ctx: &FrameCtx) {
         let v = View::fit_world(AW, AH);
-        style::backdrop();
         if self.flash > 0.001 {
             // Beats breathe the cool body faintly; amber stays reserved for the
             // hero, so the negative space never warms.
@@ -161,7 +164,5 @@ impl Mode for Spectrum {
 
             x += slot;
         }
-
-        style::finish(ctx.time);
     }
 }

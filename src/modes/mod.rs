@@ -48,6 +48,21 @@ pub trait Mode {
     }
     /// Apply a changed parameter (value stored as f32; bools are 0/1).
     fn set_param(&mut self, _name: &str, _value: f32) {}
+
+    /// Feedback-trail strength, 0..~0.3 (0 = none). When > 0 the mode is drawn
+    /// through the feedback buffer: each frame the previous frame decays toward
+    /// the backdrop by this fraction, so motion leaves echoes. Waterfall/3D
+    /// modes return 0 (feedback would smear the time axis / depth).
+    fn trail(&self) -> f32 {
+        0.0
+    }
+
+    /// True if the mode paints its own opaque background (e.g. Surfer's sky), so
+    /// the post pipeline draws it directly instead of wrapping it in the shared
+    /// backdrop + feedback.
+    fn own_background(&self) -> bool {
+        false
+    }
 }
 
 /// What kind of control a [`Param`] renders as.

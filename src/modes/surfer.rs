@@ -195,6 +195,12 @@ impl Mode for Surfer {
         "A 3D lane runner the music plays: beats become trains, jumps, and coin trails."
     }
 
+    // Surfer paints its own sky and finish (3D + fog carry the motion; feedback
+    // would smear the depth), so it's drawn directly, not through the pipeline.
+    fn own_background(&self) -> bool {
+        true
+    }
+
     fn reset(&mut self, track: &Track) {
         let p = &track.profile;
         self.hop_dt = p.hop_dt;

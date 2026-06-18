@@ -14,6 +14,7 @@ mod analysis;
 mod audio;
 mod export;
 mod modes;
+mod postfx;
 mod style;
 mod track;
 mod view;
@@ -34,6 +35,7 @@ use modes::spectrum::Spectrum;
 use modes::starfield::Starfield;
 use modes::surfer::Surfer;
 use modes::{FrameCtx, Mode, Param, ParamKind};
+use postfx::PostFx;
 use track::Track;
 
 const SHOT_FRAMES: u32 = 180;
@@ -319,6 +321,8 @@ async fn main() {
     let mut export_status = String::new();
     // Headless CLI export (created lazily on the first frame so GL is ready).
     let mut cli_exporter: Option<Exporter> = None;
+    // The "alive" feedback pipeline (lazily sized to the window).
+    let mut postfx: Option<PostFx> = None;
     let mut ui = UiState {
         tab: Tab::Modes,
         seeking: false,
@@ -442,6 +446,9 @@ async fn main() {
                         m.reset(audio.track());
                     }
                     last_t = 0.0;
+                    if let Some(p) = postfx.as_mut() {
+                        p.reset();
+                    }
                     loading = None;
                 }
                 Ok(LoadResult::Failed(e)) => {
@@ -556,20 +563,34 @@ async fn main() {
                     Action::SelectMode(i) => {
                         sel = i;
                         modes[sel].reset(audio.track());
+                        if let Some(p) = postfx.as_mut() {
+                            p.reset();
+                        }
                     }
                     Action::SetParam(name, v) => modes[sel].set_param(name, v),
                     Action::TogglePause => audio.toggle_pause(),
                     Action::Seek(t) => {
                         audio.seek(t);
                         last_t = t;
+                        if let Some(p) = postfx.as_mut() {
+                            p.reset();
+                        }
                     }
                     Action::SetVolume(v) => audio.set_volume(v),
                     Action::RestartMode => {
                         audio.restart();
                         modes[sel].reset(audio.track());
                         last_t = 0.0;
+                        if let Some(p) = postfx.as_mut() {
+                            p.reset();
+                        }
                     }
-                    Action::SetTheme(i) => style::set_theme(i),
+                    Action::SetTheme(i) => {
+                        style::set_theme(i);
+                        if let Some(p) = postfx.as_mut() {
+                            p.reset(); // trails would otherwise be the old palette
+                        }
+                    }
                     Action::StartExport(settings) => {
                         if exporter.is_none() && save_dialog.is_none() {
                             pending_settings = Some(settings);
@@ -620,6 +641,9 @@ async fn main() {
             if t < last_t {
                 last_t = 0.0;
                 modes[sel].reset(audio.track());
+                if let Some(p) = postfx.as_mut() {
+                    p.reset();
+                }
             }
             let feat = features_at(&mut analyser, audio.track(), &mut window, t, last_t, dt);
             last_t = t;
@@ -628,7 +652,16 @@ async fn main() {
             if !audio.is_paused() {
                 modes[sel].update(&ctx);
             }
-            modes[sel].draw(&ctx);
+            if modes[sel].own_background() {
+                modes[sel].draw(&ctx); // Surfer: paints its own sky, drawn direct
+            } else {
+                // Everything else goes through the feedback pipeline.
+                let (sw, sh) = (screen_width() as u32, screen_height() as u32);
+                if postfx.as_ref().map(PostFx::size) != Some((sw, sh)) {
+                    postfx = Some(PostFx::new(sw, sh));
+                }
+                postfx.as_mut().unwrap().render(&*modes[sel], &ctx, None);
+            }
         }
 
         // ---- paint UI on top, or capture a headless shot ------------------

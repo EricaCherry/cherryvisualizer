@@ -19,6 +19,7 @@ use macroquad::prelude::*;
 
 use crate::analysis::{features_at, Analyser, FFT_LEN};
 use crate::modes::{FrameCtx, Mode};
+use crate::postfx::PostFx;
 use crate::track::Track;
 use crate::view;
 
@@ -37,6 +38,7 @@ enum Msg {
 pub struct Exporter {
     settings: ExportSettings,
     rt: RenderTarget,
+    postfx: PostFx,
     mode: Box<dyn Mode>,
     analyser: Analyser,
     window: Vec<f32>,
@@ -92,6 +94,7 @@ impl Exporter {
 
         let rt = render_target(settings.width, settings.height);
         rt.texture.set_filter(FilterMode::Linear);
+        let postfx = PostFx::new(settings.width, settings.height);
 
         mode.reset(track);
         let total = ((track.duration() * settings.fps as f32).ceil() as u32).max(1);
@@ -99,6 +102,7 @@ impl Exporter {
         Ok(Exporter {
             settings,
             rt,
+            postfx,
             mode,
             analyser: Analyser::new(FFT_LEN),
             window: vec![0.0; FFT_LEN],
@@ -167,8 +171,13 @@ impl Exporter {
         let feat = features_at(&mut self.analyser, track, &mut self.window, t, prev_t, dt);
         let ctx = FrameCtx { wave: &self.window, feat: &feat, track, time: t, dt };
 
+        self.mode.update(&ctx);
         let (w, h) = (self.settings.width as f32, self.settings.height as f32);
-        render_mode_into(&self.rt, w, h, self.mode.as_mut(), &ctx);
+        if self.mode.own_background() {
+            render_mode_into(&self.rt, w, h, self.mode.as_ref(), &ctx);
+        } else {
+            self.postfx.render(self.mode.as_ref(), &ctx, Some(&self.rt));
+        }
 
         // get_texture_data() returns rows bottom-up (GL order); ffmpeg flips it
         // back top-down with `-vf vflip`, so no CPU copy here.
@@ -180,11 +189,10 @@ impl Exporter {
 /// `(w, h)`. This holds the exporter's camera contract in ONE place: point the
 /// View at the offscreen target, draw, then clear it so live play is never left
 /// rendering offscreen.
-fn render_mode_into(rt: &RenderTarget, w: f32, h: f32, mode: &mut dyn Mode, ctx: &FrameCtx) {
+fn render_mode_into(rt: &RenderTarget, w: f32, h: f32, mode: &dyn Mode, ctx: &FrameCtx) {
     view::set_render_size(Some((w, h)));
     view::set_export_target(Some(rt.clone()));
     view::apply_screen_camera();
-    mode.update(ctx);
     mode.draw(ctx);
     set_default_camera();
     view::set_export_target(None);
@@ -214,6 +222,7 @@ pub fn render_preview(settings: ExportSettings, mut mode: Box<dyn Mode>, track: 
     let mut window = vec![0.0f32; FFT_LEN];
     let rt = render_target(settings.width, settings.height);
     rt.texture.set_filter(FilterMode::Linear);
+    let mut postfx = PostFx::new(settings.width, settings.height);
     mode.reset(track);
 
     let fps = settings.fps as f32;
@@ -224,7 +233,12 @@ pub fn render_preview(settings: ExportSettings, mut mode: Box<dyn Mode>, track: 
         let prev_t = (i as f32 - 1.0) / fps;
         let feat = features_at(&mut analyser, track, &mut window, t, prev_t, dt);
         let ctx = FrameCtx { wave: &window, feat: &feat, track, time: t, dt };
-        render_mode_into(&rt, w, h, mode.as_mut(), &ctx);
+        mode.update(&ctx);
+        if mode.own_background() {
+            render_mode_into(&rt, w, h, mode.as_ref(), &ctx);
+        } else {
+            postfx.render(mode.as_ref(), &ctx, Some(&rt));
+        }
     }
     rt.texture.get_texture_data()
 }
