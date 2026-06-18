@@ -85,6 +85,8 @@ struct Args {
     export: Option<PathBuf>,
     /// `--export-frame <mode>`: dump a single PNG of the mode and exit (dev).
     export_frame: Option<String>,
+    /// `--bench [mode]`: time update+draw per mode headless, print a table, exit.
+    bench: Option<String>,
     res: Option<u32>,
     fps: Option<u32>,
 }
@@ -110,6 +112,13 @@ fn parse_args() -> Args {
                     it.next();
                 }
                 out.export_frame = Some(mode.unwrap_or_else(|| "breakout".into()));
+            }
+            "--bench" => {
+                let mode = it.peek().filter(|v| !v.starts_with("--")).cloned();
+                if mode.is_some() {
+                    it.next();
+                }
+                out.bench = Some(mode.unwrap_or_default());
             }
             "--res" => out.res = it.next().and_then(|v| v.parse().ok()),
             "--fps" => out.fps = it.next().and_then(|v| v.parse().ok()),
@@ -236,7 +245,7 @@ async fn main() {
 
     let headless = args.shot.is_some();
     let ui_shot = args.shot.as_deref() == Some("ui"); // capture the UI for dev verification
-    let cli_export = args.export.is_some() || args.export_frame.is_some();
+    let cli_export = args.export.is_some() || args.export_frame.is_some() || args.bench.is_some();
     let mut audio = AudioEngine::new(!(headless || cli_export));
     let mut analyser = Analyser::new(FFT_LEN);
     let mut modes: Vec<Box<dyn Mode>> = (0..MODE_COUNT).map(make_mode).collect();
@@ -280,6 +289,60 @@ async fn main() {
         export_res: 1080,
         export_fps: 60,
     };
+
+    // ---- headless CLI: per-mode CPU cost of update()+draw() ----------------
+    if let Some(tag) = args.bench.clone() {
+        let which: Vec<usize> = if tag.is_empty() {
+            (0..modes.len()).collect()
+        } else {
+            modes
+                .iter()
+                .position(|m| m.name().to_lowercase().contains(&tag))
+                .map(|i| vec![i])
+                .unwrap_or_else(|| (0..modes.len()).collect())
+        };
+        let frames = 400u32;
+        let warmup = 30u32;
+        let dt = 1.0 / 60.0;
+        println!("{:<14}{:>10}{:>10}{:>10}{:>9}", "mode", "upd ms", "draw ms", "p95 ms", "est fps");
+        for &mi in &which {
+            modes[mi].reset(audio.track());
+            let mut upd_sum = 0.0f64;
+            let mut draws: Vec<f64> = Vec::with_capacity(frames as usize);
+            for f in 0..frames + warmup {
+                let t = f as f32 * dt;
+                audio.track().window_at(t, &mut window);
+                let mut feat = analyser.analyze(&window, audio.track().sr, dt);
+                feat.beat = audio.track().profile.beat_in((t - dt).max(0.0), t);
+                let ctx = FrameCtx { wave: &window, feat: &feat, track: audio.track(), time: t, dt };
+                let t0 = std::time::Instant::now();
+                modes[mi].update(&ctx);
+                let t1 = std::time::Instant::now();
+                modes[mi].draw(&ctx);
+                let t2 = std::time::Instant::now();
+                if f >= warmup {
+                    upd_sum += (t1 - t0).as_secs_f64() * 1000.0;
+                    draws.push((t2 - t1).as_secs_f64() * 1000.0);
+                }
+                next_frame().await;
+            }
+            let n = draws.len().max(1) as f64;
+            let upd_m = upd_sum / n;
+            let draw_m = draws.iter().sum::<f64>() / n;
+            draws.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            let p95 = draws[((draws.len() as f64 * 0.95) as usize).min(draws.len() - 1)];
+            let total = (upd_m + draw_m).max(1e-3);
+            println!(
+                "{:<14}{:>10.3}{:>10.3}{:>10.3}{:>9.0}",
+                modes[mi].name(),
+                upd_m,
+                draw_m,
+                p95,
+                1000.0 / total
+            );
+        }
+        std::process::exit(0);
+    }
 
     loop {
         let dt = if headless { 1.0 / 60.0 } else { get_frame_time().min(0.05) };
