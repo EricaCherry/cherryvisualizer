@@ -24,15 +24,37 @@ pub struct AudioEngine {
     /// Visual playhead in seconds — the single source of truth for all modes.
     pos: f32,
     paused: bool,
+    volume: f32,
 }
 
 impl AudioEngine {
     /// `audible = false` skips the audio device (headless `--shot` captures).
     pub fn new(audible: bool) -> Self {
         let sound = if audible { open_sound() } else { None };
-        let mut engine = AudioEngine { track: Track::synth_demo(), sound, pos: 0.0, paused: false };
+        let mut engine =
+            AudioEngine { track: Track::synth_demo(), sound, pos: 0.0, paused: false, volume: 0.85 };
         engine.start_playback();
         engine
+    }
+
+    pub fn volume(&self) -> f32 {
+        self.volume
+    }
+
+    pub fn set_volume(&mut self, v: f32) {
+        self.volume = v.clamp(0.0, 1.0);
+        if let Some(s) = &self.sound {
+            s.player.set_volume(self.volume);
+        }
+    }
+
+    /// Jump the playhead (and audio) to `t` seconds.
+    pub fn seek(&mut self, t: f32) {
+        let t = t.clamp(0.0, self.duration());
+        self.pos = t;
+        if let Some(s) = &self.sound {
+            let _ = s.player.try_seek(std::time::Duration::from_secs_f32(t));
+        }
     }
 
     pub fn track(&self) -> &Track {
@@ -41,10 +63,6 @@ impl AudioEngine {
 
     pub fn duration(&self) -> f32 {
         self.track.duration()
-    }
-
-    pub fn is_audible(&self) -> bool {
-        self.sound.is_some()
     }
 
     pub fn is_paused(&self) -> bool {
@@ -104,18 +122,6 @@ impl AudioEngine {
         Ok(())
     }
 
-    pub fn status_line(&self) -> String {
-        let fmt = |s: f32| format!("{}:{:02}", (s / 60.0) as u32, (s % 60.0) as u32);
-        let state = if self.paused {
-            "paused"
-        } else if self.is_audible() {
-            "playing"
-        } else {
-            "silent clock"
-        };
-        format!("{}  ·  {} / {}  ·  {}", self.track.name, fmt(self.pos), fmt(self.duration()), state)
-    }
-
     /// (Re)start audio output for the current track with a fresh player.
     fn start_playback(&mut self) {
         let source = mono_source(&self.track);
@@ -123,6 +129,7 @@ impl AudioEngine {
             // A brand-new player guarantees a clean, playing state; assigning it
             // drops the previous player, which stops its audio.
             let player = rodio::Player::connect_new(s.out.mixer());
+            player.set_volume(self.volume);
             player.append(source);
             if self.paused {
                 player.pause();

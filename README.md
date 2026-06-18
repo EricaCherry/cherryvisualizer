@@ -5,19 +5,39 @@
 Open a song. Pick a mode. Watch the music play it — no player, no controls,
 no install, no server. One double-clickable executable, written in Rust.
 
-![Main menu](docs/screenshots/menu-rust.png)
+![Desktop UI](docs/screenshots/ui-rust.png)
 
 | Waveform Breakout | Beat Surfer |
 |---|---|
 | ![Breakout](docs/screenshots/breakout-rust.png) | ![Surfer](docs/screenshots/surfer-rust.png) |
+| Spectrum | Oscilloscope |
+| ![Spectrum](docs/screenshots/spectrum-rust.png) | ![Oscilloscope](docs/screenshots/scope-rust.png) |
+| Spectrogram | Starfield |
+| ![Spectrogram](docs/screenshots/spectrogram-rust.png) | ![Starfield](docs/screenshots/starfield-rust.png) |
 
 ## The modes
+
+Six so far, mixing the flagship "the audio plays the game" modes with the
+classic music-visualizer staples:
 
 **Waveform Breakout** — breakout with no player and no paddle sprite: **the live
 waveform IS the paddle.** It forms a deforming surface along the bottom of the
 arena that bats the ball up with power taken from the music's loudness. The
 ball breaks the bricks (each column lit by its own frequency band); strong
-beats kick the ball; broken bricks grow back so the rally never ends.
+beats kick the ball, and the wall doesn't regenerate, so a song slowly
+demolishes it.
+
+**Spectrum** — the classic Winamp-style frequency bars, with peak-hold caps
+that fall under gravity, a translucent reflection, and a beat-driven flush.
+
+**Oscilloscope** — the raw waveform drawn as a glowing scope trace with
+phosphor-style persistence: older sweeps fade behind the bright live one.
+
+**Spectrogram** — a scrolling time–frequency waterfall; the whole spectrum
+painted as heat (deep blue through green to white-hot), newest at the right.
+
+**Starfield** — the demoscene/screensaver warp-stars, flown by the music:
+loudness sets the speed and every beat punches the field into hyperspace.
 
 **Beat Surfer** — a 3D lane runner (think Subway Surfers), played entirely by
 the music. Cherry pre-analyzes the whole track at load and turns the beat grid
@@ -45,28 +65,59 @@ cargo run --release -- --file path\to\song.mp3
 The binary lands at `target/release/cherry.exe` — copy it anywhere and
 double-click it. Supports mp3, wav, flac, ogg, m4a.
 
-Cherry opens to a **main menu**: pick a mode (Up/Down) and a track (`O` to open
-an audio file, or just play the built-in demo), then `Enter` to start. Opening a
-file decodes on a **background thread behind a loading bar**, so the window
-never freezes.
+Cherry opens to a normal **desktop UI** (egui): a **menu bar** (File / View /
+Help), a **tabbed sidebar** — *Modes* (pick the visualizer), *Settings* (live
+sliders for the selected mode), *Library*, *Export* — and a **transport bar**
+with play/pause, a seek slider, and volume. Open a track from **File → Open** (it
+decodes on a background thread, so the window never freezes), pick a mode, and
+tune it live.
 
-**In a mode:** `Esc` back to menu · `1`/`2`/`Tab` switch mode · `Space` pause ·
-`R` restart.
+**Shortcuts:** `Space` play/pause · `Tab` next mode · `R` restart · `F`
+fullscreen. With no track loaded, a built-in demo groove plays.
+
+## Export to video
+
+The **Export** tab renders the current mode to a 16:9 **MP4** with the track's
+audio muxed in — pick 720p / 1080p / 1440p and 30 / 60 fps, hit *Export MP4…*,
+and choose where to save. Rendering is **offscreen** at the chosen resolution
+(independent of the window), so it's deterministic and frame-exact: the same
+song always produces the same video. It needs [ffmpeg](https://ffmpeg.org/) on
+your `PATH` (libx264 + aac).
+
+There's also a headless CLI for batch jobs and CI:
+
+```
+cargo run --release -- --export out.mp4 --file song.mp3 --res 1080 --fps 60
+```
 
 ## How it works
 
 ```
 src/
-  main.rs          app shell: window, input, HUD, mode switching
-  audio.rs         playback + the master clock (rodio, with a silent fallback)
+  main.rs          egui desktop UI (menu/tabs/transport) + the app loop
+  audio.rs         playback, the master clock, volume + seek (rodio)
   track.rs         decode to PCM + offline pre-analysis (beat grid, loudness)
   analysis.rs      per-frame FFT features (32 log bands, bass/mid/treble, rms)
-  view.rs          fixed 16x9 world space, letterboxed; shared palette
+  view.rs          world space -> letterboxed viewport; shared palette + the
+                   offscreen-render plumbing the exporter uses
+  export.rs        offscreen render -> raw frames -> ffmpeg -> MP4 (+ audio mux)
   modes/
-    mod.rs         the Mode trait — a mode is one file implementing it
-    breakout.rs    waveform-paddle breakout (rapier2d physics)
+    mod.rs         the Mode trait + the Param settings system
+    breakout.rs    waveform-paddle breakout (rapier2d); live-tunable
+    spectrum.rs    Winamp-style frequency bars with peak-hold caps
+    scope.rs       glowing oscilloscope with phosphor persistence
+    spectrogram.rs scrolling time-frequency heat waterfall
+    starfield.rs   beat-warped projected starfield
     surfer.rs      beat-choreographed 3D lane runner (immediate-mode 3D + fog)
 ```
+
+Modes draw in a fixed 16:9 world and never touch pixels or the window, so the
+exporter can re-render any of them — 2D or 3D — into an offscreen target at any
+resolution just by overriding the logical screen size and render target.
+
+Each mode exposes a list of named **params** (`Mode::params` / `set_param`) that
+the Settings tab renders as sliders — so the ball speed, block size, court
+height, columns and rows of Breakout are all live knobs in the UI.
 
 The design that makes "the music plays the game" exact rather than reactive:
 tracks are **pre-analyzed offline at load** (a beat grid with strengths, plus a
@@ -76,11 +127,12 @@ PCM window at the playhead, its spectral features, and that profile — and draw
 in a fixed 16:9 world space. Adding a mode is one file plus one line in
 `main.rs`.
 
-Stack: [macroquad](https://github.com/not-fl3/macroquad) (window + 2D),
-[rapier2d](https://rapier.rs) (physics), [rodio](https://github.com/RustAudio/rodio)
-(decode + playback), [realfft](https://github.com/HEnquist/realfft) (spectrum),
-[rfd](https://github.com/PolyMeilex/rfd) (native file dialog). All permissively
-licensed.
+Stack: [macroquad](https://github.com/not-fl3/macroquad) (window + 2D/3D),
+[egui](https://github.com/emilk/egui) (desktop UI), [rapier2d](https://rapier.rs)
+(physics), [rodio](https://github.com/RustAudio/rodio) (decode + playback),
+[realfft](https://github.com/HEnquist/realfft) (spectrum),
+[rfd](https://github.com/PolyMeilex/rfd) (native file dialog), and
+[ffmpeg](https://ffmpeg.org/) (video export). All permissively licensed.
 
 ## Roadmap
 
@@ -90,8 +142,10 @@ sources to adapt). The other docs in `docs/` are research from an earlier web
 prototype; the mode catalog and strategy remain the guiding documents, ported
 mode by mode into this native app.
 
-Headless capture for development/CI: `cherry --shot [breakout|surfer]
-[--file song]` renders 180 frames on a silent fixed clock and writes a PNG.
+Headless capture for development/CI: `cherry --shot <mode> [--file song]`
+renders 180 frames on a silent fixed clock and writes a PNG; `cherry
+--export-frame <mode>` dumps one clean 1080p frame of a mode through the
+exporter (handy for docs and orientation checks).
 
 ## License
 

@@ -26,6 +26,7 @@ use macroquad::prelude::*;
 
 use crate::modes::{FrameCtx, Mode};
 use crate::track::Track;
+use crate::view;
 
 // ---- world tuning -----------------------------------------------------------
 const LANE_W: f32 = 2.3;
@@ -195,6 +196,10 @@ impl Mode for Surfer {
         "Beat Surfer"
     }
 
+    fn about(&self) -> &'static str {
+        "A 3D lane runner the music plays: beats become trains, jumps, and coin trails."
+    }
+
     fn reset(&mut self, track: &Track) {
         let p = &track.profile;
         self.hop_dt = p.hop_dt;
@@ -326,8 +331,11 @@ impl Mode for Surfer {
         let bank = (lateral_v * 0.022).clamp(-0.14, 0.14);
 
         // ================= 2D backdrop (drawn before the 3D pass) ============
+        // In normal play this is the default screen camera; during export it
+        // points the 2D pass at the offscreen target.
+        view::apply_screen_camera();
         clear_background(SKY_TOP);
-        let (sw, sh) = (screen_width(), screen_height());
+        let (sw, sh) = (view::screen_w(), view::screen_h());
         let horizon_y = sh * 0.52;
         let strips = 14;
         for i in 0..strips {
@@ -370,6 +378,10 @@ impl Mode for Surfer {
             target: vec3(px * 0.86, 1.15 + py * 0.45, -8.0),
             up: vec3(bank, 1.0, 0.0).normalize(),
             fovy: fov,
+            // Lock the aspect to the logical frame and route to the export
+            // target when one is active, so the 3D pass exports correctly.
+            aspect: Some(view::screen_w() / view::screen_h()),
+            render_target: view::export_target(),
             ..Default::default()
         });
 
@@ -597,10 +609,5 @@ impl Mode for Surfer {
         box_outlined(vec3(px + lean * 0.22, base + 1.20, 0.0), vec3(0.27, 0.27, 0.27), PLAYER_SKIN);
 
         set_default_camera();
-
-        // Coin counter, top-right.
-        let text = format!("{} coins", self.prev_collected);
-        let dim = measure_text(&text, None, 26, 1.0);
-        draw_text(&text, sw - dim.width - 18.0, 30.0, 26.0, Color::new(0.95, 0.82, 0.45, 0.8));
     }
 }

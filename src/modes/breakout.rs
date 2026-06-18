@@ -1,16 +1,15 @@
 //! Waveform Breakout — real breakout, played by the audio.
 //!
-//! Classic breakout has NO gravity: the ball travels in straight lines at a
-//! constant speed and reflects off whatever it hits. Here there is no player
-//! and no paddle sprite — the live waveform IS the paddle. It forms a
-//! full-width deforming surface along the bottom; when the ball comes down and
-//! hits it, the waveform's slope at that point steers the bounce back up into
-//! the wall. The ball breaks bricks (each column lit by its frequency band);
-//! the wall is large and does NOT regenerate, so a song slowly demolishes it.
+//! Classic breakout has NO gravity: the ball travels straight lines at constant
+//! speed and reflects off whatever it hits. There is no player and no paddle
+//! sprite — the live waveform IS the paddle, a full-width deforming surface on
+//! the floor whose slope steers each bounce back up into a tall brick wall.
+//! The wall is large and does NOT regenerate, so a song demolishes it.
 //!
-//! The music plays the game two ways: its waveform shapes the paddle every
-//! frame (where and how the ball is sent back), and its loudness sets the ball
-//! speed — so the rally surges in loud passages and eases in quiet ones.
+//! The arena is 16:9 (fills the export frame). A small ball and small bricks
+//! packed at the top leave a big open court below. The paddle waveform is
+//! smoothed in space and over time, and pulses with loudness, so it flows and
+//! breathes instead of jittering.
 
 use macroquad::prelude::*;
 use rapier2d::prelude::*;
@@ -18,22 +17,27 @@ use std::collections::VecDeque;
 use std::sync::mpsc::{channel, Receiver};
 
 use crate::analysis::N_BANDS;
-use crate::modes::{FrameCtx, Mode};
+use crate::modes::{FrameCtx, Mode, Param};
 use crate::track::Track;
 use crate::view::{hsl, View, AH, AW, BG, WAVE};
 
-const BALL_R: f32 = 0.26;
-const PADDLE_BASE_Y: f32 = 1.0;
-const PADDLE_AMP: f32 = 0.9;
-const PADDLE_FLOOR: f32 = 0.18;
-const WAVE_PTS: usize = 80;
+// 16:9 world (AW x AH) — fills a 16:9 frame exactly, which is what the video
+// exporter wants. Small ball + small bricks confined to the top leave a large
+// open court below.
+const BALL_R: f32 = 0.16;
+const PADDLE_BASE_Y: f32 = 0.5;
+const PADDLE_FLOOR: f32 = 0.1;
+const WAVE_PTS: usize = 110;
+const BRICK_TOP: f32 = 8.85;
+const TRAIL_LEN: usize = 22;
 
-const BALL_SPEED: f32 = 5.6; // base world units/sec; loudness adds to it
-const COLS: usize = 22;
-const ROWS: usize = 10;
-const BRICK_TOP: f32 = 8.6;
-const BRICK_BOTTOM: f32 = 3.9;
-const TRAIL_LEN: usize = 16;
+// Defaults for the live-tunable settings exposed via params().
+const DEF_BALL_SPEED: f32 = 3.5;
+const DEF_PADDLE_AMP: f32 = 1.5;
+const DEF_BRICK_FILL: f32 = 0.55; // brick size as a fraction of its grid cell
+const DEF_COURT: f32 = 7.7; // brick_bottom; higher = bricks higher = bigger court
+const DEF_COLS: usize = 34;
+const DEF_ROWS: usize = 6;
 
 struct Brick {
     handle: ColliderHandle,
@@ -44,7 +48,6 @@ struct Brick {
     band: usize,
     color: Color,
     alive: bool,
-    /// Draw scale, eased to 0 when broken (a quick shrink-pop).
     anim: f32,
 }
 
@@ -70,16 +73,27 @@ pub struct Breakout {
     pipeline: PhysicsPipeline,
     params: IntegrationParameters,
 
+    static_body: RigidBodyHandle,
     ball: RigidBodyHandle,
     ball_collider: ColliderHandle,
     paddle: ColliderHandle,
     bricks: Vec<Brick>,
     total_bricks: u32,
 
+    // live-tunable settings (see params()/set_param())
+    ball_speed: f32,
+    paddle_amp: f32,
+    brick_fill: f32,
+    court: f32,
+    cols: usize,
+    rows: usize,
+
     col_recv: Receiver<CollisionEvent>,
     _force_recv: Receiver<ContactForceEvent>,
     events: ChannelEventCollector,
 
+    /// Per-point paddle height, temporally smoothed (what is drawn + collided).
+    paddle_y: Vec<f32>,
     paddle_world: Vec<(f32, f32)>,
     trail: VecDeque<(f32, f32)>,
     shards: Vec<Shard>,
@@ -115,7 +129,6 @@ impl Breakout {
             colliders.insert_with_parent(c, static_body, &mut bodies);
         }
 
-        // The waveform paddle: a polyline reshaped every frame via set_shape().
         let verts: Vec<Vector> = (0..WAVE_PTS)
             .map(|i| Vector::new(i as f32 / (WAVE_PTS - 1) as f32 * AW, PADDLE_BASE_Y))
             .collect();
@@ -126,44 +139,10 @@ impl Breakout {
             .build();
         let paddle = colliders.insert_with_parent(paddle_col, static_body, &mut bodies);
 
-        // A large brick wall, one spectrum band per column.
-        let margin = 0.6f32;
-        let area_w = AW - margin * 2.0;
-        let slot = area_w / COLS as f32;
-        let bw = slot * 0.9 / 2.0;
-        let rgap = (BRICK_TOP - BRICK_BOTTOM) / ROWS as f32;
-        let bh = rgap * 0.62 / 2.0;
-        let mut bricks = Vec::new();
-        for r in 0..ROWS {
-            for c in 0..COLS {
-                let x = margin + (c as f32 + 0.5) * slot;
-                let y = BRICK_BOTTOM + (r as f32 + 0.5) * rgap;
-                let col = ColliderBuilder::cuboid(bw, bh)
-                    .translation(Vector::new(x, y))
-                    .restitution(1.0)
-                    .friction(0.0)
-                    .active_events(ActiveEvents::COLLISION_EVENTS)
-                    .build();
-                let handle = colliders.insert_with_parent(col, static_body, &mut bodies);
-                bricks.push(Brick {
-                    handle,
-                    x,
-                    y,
-                    hw: bw,
-                    hh: bh,
-                    band: (c * N_BANDS / COLS).min(N_BANDS - 1),
-                    color: hsl(0.58 - c as f32 / COLS as f32 * 0.62, 0.5, 0.55),
-                    alive: true,
-                    anim: 1.0,
-                });
-            }
-        }
-        let total_bricks = bricks.len() as u32;
-
-        // The ball — no gravity; speed is held constant each frame.
+        // The ball — no gravity; speed held constant each frame.
         let ball_rb = RigidBodyBuilder::dynamic()
-            .translation(Vector::new(AW / 2.0, 2.8))
-            .linvel(Vector::new(2.2, BALL_SPEED))
+            .translation(Vector::new(AW / 2.0, AH * 0.35))
+            .linvel(Vector::new(2.4, DEF_BALL_SPEED))
             .ccd_enabled(true)
             .build();
         let ball = bodies.insert(ball_rb);
@@ -182,7 +161,7 @@ impl Breakout {
         let mut params = IntegrationParameters::default();
         params.dt = 1.0 / 60.0;
 
-        Breakout {
+        let mut me = Breakout {
             bodies,
             colliders,
             islands: IslandManager::new(),
@@ -193,29 +172,82 @@ impl Breakout {
             ccd: CCDSolver::new(),
             pipeline: PhysicsPipeline::new(),
             params,
+            static_body,
             ball,
             ball_collider,
             paddle,
-            bricks,
-            total_bricks,
+            bricks: Vec::new(),
+            total_bricks: 0,
+            ball_speed: DEF_BALL_SPEED,
+            paddle_amp: DEF_PADDLE_AMP,
+            brick_fill: DEF_BRICK_FILL,
+            court: DEF_COURT,
+            cols: DEF_COLS,
+            rows: DEF_ROWS,
             col_recv,
             _force_recv,
             events,
+            paddle_y: vec![PADDLE_BASE_Y; WAVE_PTS],
             paddle_world: vec![(0.0, PADDLE_BASE_Y); WAVE_PTS],
             trail: VecDeque::new(),
             shards: Vec::new(),
             paddle_flash: 0.0,
             boost: 1.0,
             score: 0,
+        };
+        me.build_wall();
+        me
+    }
+
+    /// (Re)build the brick wall from the current cols/rows/brick_fill/court.
+    /// Removes any existing brick colliders first, so it is safe to call live.
+    fn build_wall(&mut self) {
+        let old: Vec<ColliderHandle> = self.bricks.iter().map(|b| b.handle).collect();
+        self.bricks.clear();
+        for h in old {
+            self.colliders.remove(h, &mut self.islands, &mut self.bodies, false);
         }
+
+        let margin = 0.4f32;
+        let area_w = AW - margin * 2.0;
+        let slot = area_w / self.cols as f32;
+        let bw = slot * self.brick_fill / 2.0;
+        let rgap = (BRICK_TOP - self.court) / self.rows as f32;
+        let bh = rgap * self.brick_fill / 2.0;
+        for r in 0..self.rows {
+            for c in 0..self.cols {
+                let x = margin + (c as f32 + 0.5) * slot;
+                let y = self.court + (r as f32 + 0.5) * rgap;
+                let col = ColliderBuilder::cuboid(bw, bh)
+                    .translation(Vector::new(x, y))
+                    .restitution(1.0)
+                    .friction(0.0)
+                    .active_events(ActiveEvents::COLLISION_EVENTS)
+                    .build();
+                let handle = self.colliders.insert_with_parent(col, self.static_body, &mut self.bodies);
+                self.bricks.push(Brick {
+                    handle,
+                    x,
+                    y,
+                    hw: bw,
+                    hh: bh,
+                    band: (c * N_BANDS / self.cols).min(N_BANDS - 1),
+                    color: hsl(0.58 - c as f32 / self.cols as f32 * 0.62, 0.5, 0.55),
+                    alive: true,
+                    anim: 1.0,
+                });
+            }
+        }
+        self.total_bricks = self.bricks.len() as u32;
     }
 
     fn serve(&mut self) {
         let dir = if macroquad::rand::gen_range(0.0, 1.0) < 0.5 { -1.0 } else { 1.0 };
         let vx = macroquad::rand::gen_range(1.6, 2.8) * dir;
+        let speed = self.ball_speed;
         if let Some(rb) = self.bodies.get_mut(self.ball) {
-            rb.set_translation(Vector::new(AW / 2.0, 2.8), true);
-            rb.set_linvel(Vector::new(vx, BALL_SPEED), true);
+            rb.set_translation(Vector::new(AW / 2.0, AH * 0.35), true);
+            rb.set_linvel(Vector::new(vx, speed), true);
         }
     }
 
@@ -234,11 +266,80 @@ impl Breakout {
             });
         }
     }
+
+    /// Rebuild the paddle from the waveform. A LIGHT spatial average keeps the
+    /// real oscilloscope shape (heavy averaging flattens it to nothing), and a
+    /// per-point temporal ease removes the frame-to-frame jitter so it flows.
+    /// Amplitude pulses with loudness.
+    fn reshape_paddle(&mut self, wave: &[f32], rms: f32, dt: f32) {
+        let n = wave.len().max(1);
+        let amp = self.paddle_amp * (0.55 + rms * 1.6); // pulses with loudness
+        let st = (dt * 11.0).min(1.0); // responsive enough to keep shape
+        for i in 0..WAVE_PTS {
+            let f = i as f32 / (WAVE_PTS - 1) as f32;
+            let center = (f * (n - 1) as f32) as usize;
+            let lo = center.saturating_sub(3);
+            let hi = (center + 3).min(n - 1);
+            let mut s = 0.0;
+            for k in lo..=hi {
+                s += wave[k];
+            }
+            let sample = s / (hi - lo + 1) as f32;
+            let target = (PADDLE_BASE_Y + sample * amp).max(PADDLE_FLOOR);
+            self.paddle_y[i] += (target - self.paddle_y[i]) * st;
+            self.paddle_world[i] = (f * AW, self.paddle_y[i]);
+        }
+    }
 }
 
 impl Mode for Breakout {
     fn name(&self) -> &'static str {
         "Breakout"
+    }
+
+    fn about(&self) -> &'static str {
+        "Breakout with no player — the waveform is the paddle. The spectrum builds the wall."
+    }
+
+    fn params(&self) -> Vec<Param> {
+        vec![
+            Param::float("Ball speed", self.ball_speed, 1.5, 9.0),
+            Param::float("Wave height", self.paddle_amp, 0.3, 3.5),
+            Param::float("Block size", self.brick_fill, 0.3, 0.95),
+            Param::float("Court height", self.court, 5.5, 8.4),
+            Param::int("Columns", self.cols as i32, 12, 64),
+            Param::int("Rows", self.rows as i32, 2, 14),
+        ]
+    }
+
+    fn set_param(&mut self, name: &str, v: f32) {
+        match name {
+            "Ball speed" => self.ball_speed = v,
+            "Wave height" => self.paddle_amp = v,
+            "Block size" => {
+                self.brick_fill = v;
+                self.build_wall();
+            }
+            "Court height" => {
+                self.court = v;
+                self.build_wall();
+            }
+            "Columns" => {
+                let n = (v.round() as usize).max(1);
+                if n != self.cols {
+                    self.cols = n;
+                    self.build_wall();
+                }
+            }
+            "Rows" => {
+                let n = (v.round() as usize).max(1);
+                if n != self.rows {
+                    self.rows = n;
+                    self.build_wall();
+                }
+            }
+            _ => {}
+        }
     }
 
     fn reset(&mut self, _track: &Track) {
@@ -253,28 +354,24 @@ impl Mode for Breakout {
         self.boost = 1.0;
         self.trail.clear();
         self.shards.clear();
+        for y in &mut self.paddle_y {
+            *y = PADDLE_BASE_Y;
+        }
         self.serve();
     }
 
     fn update(&mut self, ctx: &FrameCtx) {
         let feat = ctx.feat;
         let dt = ctx.dt;
+        // Step physics at the real frame delta so playback and exports at any
+        // frame rate move the ball at the same real-world speed.
+        self.params.dt = dt.clamp(1.0 / 240.0, 1.0 / 24.0);
         self.paddle_flash = (self.paddle_flash - dt * 4.0).max(0.0);
         self.boost += (1.0 - self.boost) * (dt * 3.0).min(1.0);
 
-        // 1) Reshape the waveform paddle from the live window.
-        let wave = ctx.wave;
-        let mut verts: Vec<Vector> = Vec::with_capacity(WAVE_PTS);
-        for i in 0..WAVE_PTS {
-            let f = i as f32 / (WAVE_PTS - 1) as f32;
-            let x = f * AW;
-            let si = ((f * (wave.len().saturating_sub(1)) as f32) as usize)
-                .min(wave.len().saturating_sub(1));
-            let y = (PADDLE_BASE_Y + wave.get(si).copied().unwrap_or(0.0) * PADDLE_AMP)
-                .max(PADDLE_FLOOR);
-            verts.push(Vector::new(x, y));
-            self.paddle_world[i] = (x, y);
-        }
+        // 1) Smoothed, pulsing waveform paddle.
+        self.reshape_paddle(ctx.wave, feat.rms, dt);
+        let verts: Vec<Vector> = self.paddle_world.iter().map(|&(x, y)| Vector::new(x, y)).collect();
         if let Some(c) = self.colliders.get_mut(self.paddle) {
             c.set_shape(SharedShape::polyline(verts, None));
         }
@@ -295,7 +392,7 @@ impl Mode for Breakout {
             &self.events,
         );
 
-        // 3) Collisions: the waveform just reflects the ball; bricks break.
+        // 3) Collisions: the waveform reflects the ball; bricks break.
         let mut events = Vec::new();
         while let Ok(e) = self.col_recv.try_recv() {
             events.push(e);
@@ -314,7 +411,7 @@ impl Mode for Breakout {
             } else if let Some(i) = self.bricks.iter().position(|b| b.handle == other && b.alive) {
                 self.bricks[i].alive = false;
                 if let Some(c) = self.colliders.get_mut(other) {
-                    c.set_sensor(true); // stays broken — the wall never regenerates
+                    c.set_sensor(true);
                 }
                 self.spawn_shards(i);
                 self.score += 1;
@@ -329,9 +426,9 @@ impl Mode for Breakout {
             }
         }
 
-        // 5) Hold the ball at a constant (loudness-scaled) speed and keep a
-        //    real vertical component so it always travels to the wall and back.
-        let target = (BALL_SPEED + feat.rms * 2.4) * self.boost;
+        // 5) Hold the ball at a constant (loudness-scaled) speed; keep a real
+        //    vertical component so it always travels to the wall and back.
+        let target = (self.ball_speed + feat.rms * 1.0) * self.boost;
         if let Some(rb) = self.bodies.get_mut(self.ball) {
             let mut v = rb.linvel();
             let sp = (v.x * v.x + v.y * v.y).sqrt();
@@ -349,7 +446,7 @@ impl Mode for Breakout {
             rb.set_linvel(v, true);
         }
 
-        // 6) Recover if the ball ever slips past the paddle or a wall.
+        // 6) Recover if the ball slips past the paddle or a wall.
         let pos = self.bodies[self.ball].translation();
         if pos.y < -0.5 || pos.y > AH + 1.0 || pos.x < -1.0 || pos.x > AW + 1.0 {
             self.serve();
@@ -376,26 +473,22 @@ impl Mode for Breakout {
     }
 
     fn draw(&self, ctx: &FrameCtx) {
-        let v = View::fit();
+        let v = View::fit_world(AW, AH);
         clear_background(BG);
         let feat = ctx.feat;
 
-        // Backdrop: stars twinkle with treble, a dim moon swells with bass.
         for i in 0..60 {
             let x = hash01(i * 3 + 1) * AW;
-            let y = 1.0 + hash01(i * 3 + 2) * (AH - 1.2);
+            let y = 1.0 + hash01(i * 3 + 2) * (AH - 1.4);
             let tw = 0.5 + 0.5 * (ctx.time * (0.8 + hash01(i) * 2.5) + i as f32).sin();
             let a = (0.05 + 0.22 * feat.treble) * tw;
-            v.rect(x, y, 0.035, 0.035, Color::new(0.9, 0.92, 1.0, a));
+            v.rect(x, y, 0.04, 0.04, Color::new(0.9, 0.92, 1.0, a));
         }
-        v.circle(AW * 0.5, AH * 0.6, 1.1 + 0.25 * feat.bass, Color::new(0.75, 0.70, 0.80, 0.020 + 0.03 * feat.bass));
-
         let rail = Color::new(0.16, 0.19, 0.25, 1.0);
         v.rect(-0.08, AH, 0.08, AH, rail);
         v.rect(AW, AH, 0.08, AH, rail);
         v.rect(-0.08, AH + 0.08, AW + 0.16, 0.08, rail);
 
-        // Bricks: beveled, lit by their column's band.
         for b in &self.bricks {
             if b.anim < 0.02 {
                 continue;
@@ -419,7 +512,6 @@ impl Mode for Breakout {
             v.circle(x, y, BALL_R * (0.4 + 0.4 * a), Color::new(0.9, 0.92, 1.0, a));
         }
 
-        // The waveform paddle: filled body + line, warmed by the mids.
         let flash = self.paddle_flash;
         let warm = feat.mid;
         let wave_c = Color::new(
@@ -438,17 +530,11 @@ impl Mode for Breakout {
             let d = v.xy(x0, 0.0);
             draw_triangle(a.into(), b.into(), c.into(), fill_c);
             draw_triangle(a.into(), c.into(), d.into(), fill_c);
-            v.line(x0, y0, x1, y1, 3.0 + flash * 2.0, wave_c);
+            v.line(x0, y0, x1, y1, 3.5 + flash * 2.0, wave_c);
         }
 
         let pos = self.bodies[self.ball].translation();
         v.circle(pos.x, pos.y, BALL_R, Color::new(0.82, 0.84, 0.90, 1.0));
         v.circle(pos.x - BALL_R * 0.25, pos.y + BALL_R * 0.25, BALL_R * 0.55, WHITE);
-
-        // Progress: bricks cleared of the total.
-        let text = format!("{} / {}", self.score, self.total_bricks);
-        let dim = measure_text(&text, None, 26, 1.0);
-        let (sx, sy) = v.xy(AW - 0.3, AH - 0.3);
-        draw_text(&text, sx - dim.width, sy, 26.0, Color::new(1.0, 1.0, 1.0, 0.5));
     }
 }
