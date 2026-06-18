@@ -1,39 +1,38 @@
-//! Spectrogram — a scrolling waterfall of the spectrum over time.
+//! Spectrogram — a scrolling time/frequency waterfall in the master palette.
 //!
-//! Every frame the current 32-band spectrum becomes one vertical column;
-//! columns scroll left so the newest is at the right edge. Low frequencies sit
-//! at the bottom. Intensity maps through a heat ramp (dark blue -> cyan ->
-//! amber -> white), the classic spectrogram look.
-
-use std::collections::VecDeque;
+//! Every frame the current 32-band spectrum becomes one column; columns scroll
+//! left so the newest is at the right edge. Low frequencies sit at the bottom.
+//! The heat ramp is the shared energy grade re-keyed so quiet bins recede into
+//! the ink floor and only loud bins climb to amber and cream — no blue->red
+//! rainbow. It opts out of the persistence trails (it IS the time axis) but
+//! still takes the shared vignette + grain so it matches the family.
 
 use macroquad::prelude::*;
 
 use crate::analysis::N_BANDS;
 use crate::modes::{FrameCtx, Mode, Param};
+use crate::style::{self, hash01, mix, INK};
 use crate::track::Track;
-use crate::view::{hsl, View, AH, AW};
+use crate::view::{View, AH, AW};
 
 pub struct Spectrogram {
-    cols: VecDeque<[f32; N_BANDS]>,
+    cols: std::collections::VecDeque<[f32; N_BANDS]>,
     width: usize,
     gain: f32,
 }
 
 impl Spectrogram {
     pub fn new() -> Self {
-        Spectrogram { cols: VecDeque::new(), width: 260, gain: 1.2 }
+        Spectrogram { cols: std::collections::VecDeque::new(), width: 260, gain: 1.2 }
     }
 }
 
-/// Intensity (0..1) -> heat color: dark blue, cyan, amber, near-white.
+/// Intensity (0..1) -> heat, re-keyed to the palette: quiet recedes into ink,
+/// then teal, then amber, then cream at the hottest.
 fn heat(v: f32) -> Color {
     let v = v.clamp(0.0, 1.0);
-    // Hue sweeps blue(0.66) -> red(0.0); lightness rises so loud bins glow.
-    let c = hsl(0.66 - 0.66 * v, 0.82, 0.06 + 0.55 * v);
-    // Lift the very top toward white for the hottest bins.
-    let w = (v - 0.65).max(0.0) / 0.35 * 0.7;
-    Color::new((c.r + w).min(1.0), (c.g + w).min(1.0), (c.b + w).min(1.0), 1.0)
+    let floor = style::smoothstep(0.0, 0.12, v); // quiet bins fade to background
+    mix(INK, style::grade(v), floor)
 }
 
 impl Mode for Spectrogram {
@@ -42,7 +41,7 @@ impl Mode for Spectrogram {
     }
 
     fn about(&self) -> &'static str {
-        "A scrolling time-frequency waterfall — the whole spectrum, painted as heat."
+        "A time/frequency waterfall graded like heat — quiet recedes, loud burns amber."
     }
 
     fn params(&self) -> Vec<Param> {
@@ -67,7 +66,7 @@ impl Mode for Spectrogram {
     fn update(&mut self, ctx: &FrameCtx) {
         let mut col = [0.0f32; N_BANDS];
         for i in 0..N_BANDS {
-            // sqrt compresses the range so quiet detail stays visible.
+            // sqrt keeps quiet detail visible against the ink floor.
             col[i] = (ctx.feat.bands[i] * self.gain).clamp(0.0, 1.0).sqrt();
         }
         self.cols.push_back(col);
@@ -76,21 +75,25 @@ impl Mode for Spectrogram {
         }
     }
 
-    fn draw(&self, _ctx: &FrameCtx) {
+    fn draw(&self, ctx: &FrameCtx) {
         let v = View::fit_world(AW, AH);
-        clear_background(Color::new(0.02, 0.02, 0.04, 1.0));
+        clear_background(INK);
 
         let cw = AW / self.width as f32;
         let rh = AH / N_BANDS as f32;
-        // Right-align so the newest column is at the right edge.
-        let start_x = AW - self.cols.len() as f32 * cw;
+        let start_x = AW - self.cols.len() as f32 * cw; // right-aligned (newest at right)
+        let n = self.cols.len();
         for (ci, col) in self.cols.iter().enumerate() {
             let x = start_x + ci as f32 * cw;
+            // ±2% column jitter + a hotter live edge break the mechanical grid.
+            let jit = 0.98 + hash01(ci as i32 * 5 + 1) * 0.04;
+            let live = if ci + 1 == n { 1.18 } else { 1.0 };
             for b in 0..N_BANDS {
                 let y_top = (b + 1) as f32 * rh;
-                // +overlap avoids hairline seams between cells.
-                v.rect(x, y_top, cw + 0.01, rh + 0.01, heat(col[b]));
+                v.rect(x, y_top, cw + 0.01, rh + 0.01, heat(col[b] * jit * live));
             }
         }
+
+        style::finish(ctx.time);
     }
 }

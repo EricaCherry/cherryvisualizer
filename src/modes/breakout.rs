@@ -18,8 +18,9 @@ use std::sync::mpsc::{channel, Receiver};
 
 use crate::analysis::N_BANDS;
 use crate::modes::{FrameCtx, Mode, Param};
+use crate::style::{self, mix, with_alpha, AMBER, AMBER_GLOW, SLATE, SPEC, TEAL, TEAL_DEEP};
 use crate::track::Track;
-use crate::view::{hsl, View, AH, AW, BG, WAVE};
+use crate::view::{View, AH, AW};
 
 // 16:9 world (AW x AH) — fills a 16:9 frame exactly, which is what the video
 // exporter wants. Small ball + small bricks confined to the top leave a large
@@ -211,12 +212,20 @@ impl Breakout {
         let margin = 0.4f32;
         let area_w = AW - margin * 2.0;
         let slot = area_w / self.cols as f32;
-        let bw = slot * self.brick_fill / 2.0;
         let rgap = (BRICK_TOP - self.court) / self.rows as f32;
         let bh = rgap * self.brick_fill / 2.0;
+        let denom = (self.rows.max(2) - 1) as f32;
         for r in 0..self.rows {
+            // Bond the courses like real brickwork — shift alternate rows.
+            let bond = if r % 2 == 1 { slot * 0.5 } else { 0.0 };
+            // Front (low) rows read brighter/closer; back rows sink to deep teal.
+            // Color is row DEPTH (a cool family), never column index — no rainbow.
+            let tone = 0.30 + 0.45 * (1.0 - r as f32 / denom);
             for c in 0..self.cols {
-                let x = margin + (c as f32 + 0.5) * slot;
+                let seed = (r as i32) * 131 + (c as i32) * 17;
+                let jw = 1.0 + (hash01(seed) - 0.5) * 0.12; // width ±6%
+                let bw = slot * self.brick_fill / 2.0 * jw;
+                let x = margin + (c as f32 + 0.5) * slot + bond;
                 let y = self.court + (r as f32 + 0.5) * rgap;
                 let col = ColliderBuilder::cuboid(bw, bh)
                     .translation(Vector::new(x, y))
@@ -225,6 +234,7 @@ impl Breakout {
                     .active_events(ActiveEvents::COLLISION_EVENTS)
                     .build();
                 let handle = self.colliders.insert_with_parent(col, self.static_body, &mut self.bodies);
+                let lift = 1.0 + (hash01(seed + 7) - 0.5) * 0.16; // brightness ±8%
                 self.bricks.push(Brick {
                     handle,
                     x,
@@ -232,7 +242,7 @@ impl Breakout {
                     hw: bw,
                     hh: bh,
                     band: (c * N_BANDS / self.cols).min(N_BANDS - 1),
-                    color: hsl(0.58 - c as f32 / self.cols as f32 * 0.62, 0.5, 0.55),
+                    color: mix(TEAL_DEEP, TEAL, (tone * lift).clamp(0.0, 1.0)),
                     alive: true,
                     anim: 1.0,
                 });
@@ -246,7 +256,8 @@ impl Breakout {
         let vx = macroquad::rand::gen_range(1.6, 2.8) * dir;
         let speed = self.ball_speed;
         if let Some(rb) = self.bodies.get_mut(self.ball) {
-            rb.set_translation(Vector::new(AW / 2.0, AH * 0.35), true);
+            // Serve off-center so the ball owns the asymmetric negative space.
+            rb.set_translation(Vector::new(AW * 0.36, AH * 0.35), true);
             rb.set_linvel(Vector::new(vx, speed), true);
         }
     }
@@ -474,67 +485,72 @@ impl Mode for Breakout {
 
     fn draw(&self, ctx: &FrameCtx) {
         let v = View::fit_world(AW, AH);
-        clear_background(BG);
+        style::backdrop();
         let feat = ctx.feat;
 
-        for i in 0..60 {
-            let x = hash01(i * 3 + 1) * AW;
-            let y = 1.0 + hash01(i * 3 + 2) * (AH - 1.4);
-            let tw = 0.5 + 0.5 * (ctx.time * (0.8 + hash01(i) * 2.5) + i as f32).sin();
-            let a = (0.05 + 0.22 * feat.treble) * tw;
-            v.rect(x, y, 0.04, 0.04, Color::new(0.9, 0.92, 1.0, a));
+        // Dust: two loose vertical drifts (not a band, not a grid), lit by treble.
+        for i in 0..20 {
+            let near = hash01(i * 7) < 0.7; // ~3:1 density between the drifts
+            let (cx, cy) = if near { (AW * 0.28, AH * 0.55) } else { (AW * 0.70, AH * 0.35) };
+            let x = cx + (hash01(i * 3 + 1) - 0.5) * 3.2;
+            let y = cy + (hash01(i * 3 + 2) - 0.5) * 4.6; // taller spread than wide
+            let tw = 0.5 + 0.5 * (ctx.time * (0.6 + hash01(i) * 2.0) + i as f32).sin();
+            let a = (0.03 + 0.10 * feat.treble) * tw;
+            v.circle(x, y, 0.025, with_alpha(mix(TEAL, SPEC, 0.4), a));
         }
-        let rail = Color::new(0.16, 0.19, 0.25, 1.0);
+
+        // Frame rails.
+        let rail = mix(SLATE, TEAL_DEEP, 0.4);
         v.rect(-0.08, AH, 0.08, AH, rail);
         v.rect(AW, AH, 0.08, AH, rail);
         v.rect(-0.08, AH + 0.08, AW + 0.16, 0.08, rail);
 
+        // Bricks: a lit cool wall. Loud bands brighten toward cream, never amber.
         for b in &self.bricks {
             if b.anim < 0.02 {
                 continue;
             }
             let e = feat.bands[b.band];
-            let k = (0.60 + 0.55 * e).min(1.15);
-            let c = Color::new((b.color.r * k).min(1.0), (b.color.g * k).min(1.0), (b.color.b * k).min(1.0), 1.0);
+            let c = mix(b.color, SPEC, (e * 0.4).min(0.45));
             let (hw, hh) = (b.hw * b.anim, b.hh * b.anim);
             let (x, y_top, w, h) = (b.x - hw, b.y + hh, hw * 2.0, hh * 2.0);
             v.rect(x, y_top, w, h, c);
-            v.rect(x, y_top, w, h * 0.20, Color::new((c.r + 0.22).min(1.0), (c.g + 0.22).min(1.0), (c.b + 0.22).min(1.0), 1.0));
+            v.rect(x, y_top, w, h * 0.22, mix(c, SPEC, 0.18)); // slim top bevel
         }
 
         for s in &self.shards {
             let a = (s.life / 0.6).clamp(0.0, 1.0);
-            v.rect(s.x, s.y, s.w * a, s.w * a, Color::new(s.color.r, s.color.g, s.color.b, a));
+            v.rect(s.x, s.y, s.w * a, s.w * a, with_alpha(s.color, a));
         }
 
+        // Ball trail: a warm echo of the hero.
         for (i, &(x, y)) in self.trail.iter().enumerate() {
-            let a = i as f32 / self.trail.len().max(1) as f32 * 0.22;
-            v.circle(x, y, BALL_R * (0.4 + 0.4 * a), Color::new(0.9, 0.92, 1.0, a));
+            let a = i as f32 / self.trail.len().max(1) as f32 * 0.30;
+            v.circle(x, y, BALL_R * (0.35 + 0.45 * a), with_alpha(AMBER_GLOW, a));
         }
 
+        // Waveform paddle: one crisp teal crest over a thin shadow and a short
+        // under-band. Flash/beat tints it warm. No stacked glow.
         let flash = self.paddle_flash;
-        let warm = feat.mid;
-        let wave_c = Color::new(
-            (WAVE.r + 0.22 * warm + (1.0 - WAVE.r) * flash * 0.7).min(1.0),
-            (WAVE.g + 0.10 * warm + (1.0 - WAVE.g) * flash * 0.7).min(1.0),
-            WAVE.b,
-            0.95,
-        );
-        let fill_c = Color::new(WAVE.r, WAVE.g, WAVE.b, 0.10 + flash * 0.06);
+        let crest = mix(TEAL, AMBER, (flash * 0.7).min(0.7));
+        let band = with_alpha(TEAL, 0.07 + flash * 0.04);
         for i in 1..self.paddle_world.len() {
             let (x0, y0) = self.paddle_world[i - 1];
             let (x1, y1) = self.paddle_world[i];
             let a = v.xy(x0, y0);
             let b = v.xy(x1, y1);
-            let c = v.xy(x1, 0.0);
-            let d = v.xy(x0, 0.0);
-            draw_triangle(a.into(), b.into(), c.into(), fill_c);
-            draw_triangle(a.into(), c.into(), d.into(), fill_c);
-            v.line(x0, y0, x1, y1, 3.5 + flash * 2.0, wave_c);
+            let cc = v.xy(x1, (y1 - 0.55).max(0.0));
+            let dd = v.xy(x0, (y0 - 0.55).max(0.0));
+            draw_triangle(a.into(), b.into(), cc.into(), band);
+            draw_triangle(a.into(), cc.into(), dd.into(), band);
+            v.line(x0, y0 - 0.04, x1, y1 - 0.04, 2.0, with_alpha(SLATE, 0.85));
+            v.line(x0, y0, x1, y1, 2.5 + flash * 1.2, crest);
         }
 
+        // Ball: the single hero.
         let pos = self.bodies[self.ball].translation();
-        v.circle(pos.x, pos.y, BALL_R, Color::new(0.82, 0.84, 0.90, 1.0));
-        v.circle(pos.x - BALL_R * 0.25, pos.y + BALL_R * 0.25, BALL_R * 0.55, WHITE);
+        style::glow_core(&v, pos.x, pos.y, BALL_R, AMBER);
+
+        style::finish(ctx.time);
     }
 }

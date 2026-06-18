@@ -122,24 +122,8 @@ impl View {
     }
 }
 
-// ---- palette (calm and solid; deliberately not neon) -----------------------
+// ---- palette ---------------------------------------------------------------
+// The shared palette + energy grade live in `style`; this alias keeps the few
+// call sites that just want "the background color" terse.
 
-pub const BG: Color = Color::new(0.07, 0.08, 0.10, 1.0);
-pub const WAVE: Color = Color::new(0.55, 0.72, 0.85, 0.95);
-
-/// HSL (all 0..1) -> Color.
-pub fn hsl(h: f32, s: f32, l: f32) -> Color {
-    let h = ((h % 1.0) + 1.0) % 1.0;
-    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
-    let x = c * (1.0 - ((h * 6.0) % 2.0 - 1.0).abs());
-    let m = l - c / 2.0;
-    let (r, g, b) = match (h * 6.0) as i32 {
-        0 => (c, x, 0.0),
-        1 => (x, c, 0.0),
-        2 => (0.0, c, x),
-        3 => (0.0, x, c),
-        4 => (x, 0.0, c),
-        _ => (c, 0.0, x),
-    };
-    Color::new(r + m, g + m, b + m, 1.0)
-}
+pub const BG: Color = crate::style::INK;

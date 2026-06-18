@@ -14,6 +14,7 @@ mod analysis;
 mod audio;
 mod export;
 mod modes;
+mod style;
 mod track;
 mod view;
 

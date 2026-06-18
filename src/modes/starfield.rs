@@ -1,15 +1,19 @@
-//! Starfield — the demoscene/screensaver warp-stars, flown by the music.
+//! Starfield — warp-stars flown by the music, in the master palette.
 //!
 //! Stars stream toward the camera at a speed set by loudness; on a beat the
-//! field punches into a brief warp, stretching each star into a streak. It's a
-//! pure 2D projection (no 3D pass), so it composes and exports like the other
-//! flat modes. The RNG is a seeded LCG so an export is reproducible.
+//! field punches into a brief warp that stretches each star into a streak.
+//! Color encodes depth + speed WITHIN the family: far/slow stars are dim teal
+//! that sinks into the background, near/fast stars warm toward amber, and only
+//! the closest few tip to cream. Pure 2D projection, so it composes and exports
+//! like the other flat modes. The RNG is a seeded LCG so an export is
+//! reproducible.
 
 use macroquad::prelude::*;
 
 use crate::modes::{FrameCtx, Mode, Param};
+use crate::style::{self, mix, smoothstep, with_alpha, AMBER_GLOW, SPEC, TEAL_DEEP};
 use crate::track::Track;
-use crate::view::{View, AH, AW, BG};
+use crate::view::{View, AH, AW};
 
 const FAR: f32 = 14.0;
 const NEAR: f32 = 0.18;
@@ -50,9 +54,13 @@ impl Starfield {
     }
 
     fn new_star(&mut self, fresh: bool) -> Star {
-        let x = (self.rand() * 2.0 - 1.0) * self.spread;
-        let y = (self.rand() * 2.0 - 1.0) * self.spread;
-        // `fresh` spreads the initial field through depth; recycled stars start far.
+        // Cluster toward the vanishing point: a squared radius biases density
+        // inward, so it isn't a uniform scatter.
+        let r = self.rand();
+        let r = r * r;
+        let ang = self.rand() * std::f32::consts::TAU;
+        let x = ang.cos() * r * self.spread;
+        let y = ang.sin() * r * self.spread;
         let z = if fresh { NEAR + self.rand() * (FAR - NEAR) } else { FAR };
         Star { x, y, z }
     }
@@ -66,15 +74,15 @@ impl Starfield {
     }
 }
 
-/// Project a star to world space (centered) with a focal scale; returns the
-/// point and its on-screen radius, or None if behind the camera.
+/// Project a star to world space (off-center vanishing point) with a focal
+/// scale; returns the point and its on-screen radius, or None if behind.
 fn project(x: f32, y: f32, z: f32) -> Option<(f32, f32, f32)> {
     if z <= NEAR * 0.5 {
         return None;
     }
     let f = AW * 0.9 / z;
-    let px = AW * 0.5 + x * f;
-    let py = AH * 0.5 + y * f;
+    let px = AW * 0.46 + x * f; // off dead-center -> not a bullseye
+    let py = AH * 0.47 + y * f;
     let r = (0.13 * (1.0 - z / FAR)).max(0.018);
     Some((px, py, r))
 }
@@ -85,7 +93,7 @@ impl Mode for Starfield {
     }
 
     fn about(&self) -> &'static str {
-        "Warp through a field of stars; loudness sets the speed and beats punch into hyperspace."
+        "Warp through stars; loudness sets the speed and beats punch into hyperspace."
     }
 
     fn params(&self) -> Vec<Param> {
@@ -135,24 +143,27 @@ impl Mode for Starfield {
 
     fn draw(&self, ctx: &FrameCtx) {
         let v = View::fit_world(AW, AH);
-        clear_background(BG);
+        style::backdrop();
         // The streak length grows with warp so beats feel like a punch.
         let streak = (0.08 + self.warp * 0.9) * self.speed * ctx.dt;
 
         for s in &self.stars {
             let Some((px, py, r)) = project(s.x, s.y, s.z) else { continue };
             let depth = 1.0 - s.z / FAR; // 0 far .. 1 near
-            let bright = (0.42 + depth * 0.78).min(1.0);
-            // Stars cool from warm-white toward blue with distance.
-            let c = Color::new(bright, bright * (0.92 + 0.08 * depth), (bright * 1.05).min(1.0), 1.0);
+            // Cool + dim when far, warming toward amber as it nears; the closest
+            // few tip to cream.
+            let mut c = mix(TEAL_DEEP, AMBER_GLOW, smoothstep(0.0, 1.0, depth));
+            c = mix(c, SPEC, smoothstep(0.86, 1.0, depth));
+            let bright = (0.32 + depth * 0.9).min(1.0);
 
             if streak > 0.02 {
-                // Tail: where the star was a moment ago (further away).
                 if let Some((tx, ty, _)) = project(s.x, s.y, s.z + streak) {
-                    v.line(tx, ty, px, py, (r * 90.0).max(1.0), Color::new(c.r, c.g, c.b, 0.5 * bright));
+                    v.line(tx, ty, px, py, (r * 90.0).max(1.0), with_alpha(c, 0.4 * bright));
                 }
             }
-            v.circle(px, py, r, c);
+            v.circle(px, py, r, with_alpha(c, bright));
         }
+
+        style::finish(ctx.time);
     }
 }

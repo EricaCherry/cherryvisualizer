@@ -25,6 +25,7 @@
 use macroquad::prelude::*;
 
 use crate::modes::{FrameCtx, Mode};
+use crate::style::{self, AMBER, AMBER_GLOW, SPEC, TEAL};
 use crate::track::Track;
 use crate::view;
 
@@ -46,13 +47,14 @@ const TRAIN_MIN_GAP: f32 = 2.5;
 const SWITCH_LEAD: f32 = 0.5;
 const SWITCH_DUR: f32 = 0.35;
 
-// Palette (dusk, flat, no neon).
-const HORIZON: Color = Color::new(0.16, 0.13, 0.18, 1.0);
-const SKY_TOP: Color = Color::new(0.05, 0.06, 0.10, 1.0);
-const ROAD: Color = Color::new(0.13, 0.14, 0.17, 1.0);
-const GROUND: Color = Color::new(0.10, 0.10, 0.13, 1.0);
-const COIN: Color = Color::new(0.92, 0.75, 0.30, 1.0);
-const PLAYER_BODY: Color = Color::new(0.78, 0.27, 0.30, 1.0); // cherry red
+// Palette — re-keyed to the shared "Dusk Encom" master palette so Surfer reads
+// as the same film as the 2D modes (dusk, flat, no neon).
+const HORIZON: Color = Color::new(0.115, 0.10, 0.105, 1.0); // warm dusk slate
+const SKY_TOP: Color = crate::style::INK;
+const ROAD: Color = Color::new(0.10, 0.12, 0.14, 1.0);
+const GROUND: Color = Color::new(0.08, 0.09, 0.11, 1.0);
+const COIN: Color = crate::style::AMBER;
+const PLAYER_BODY: Color = Color::new(0.78, 0.27, 0.30, 1.0); // cherry red — the brand hero
 const PLAYER_SKIN: Color = Color::new(0.88, 0.78, 0.66, 1.0);
 
 struct Switch {
@@ -348,19 +350,20 @@ impl Mode for Surfer {
             );
             draw_rectangle(0.0, horizon_y * k, sw, horizon_y / strips as f32 + 1.0, c);
         }
-        // Stars twinkle with the treble layer.
-        for i in 0..70 {
-            let x = hash01(i * 3 + 1) * sw;
+        // Stars twinkle with the treble layer, gathered in two loose drifts.
+        for i in 0..54 {
+            let cx = if hash01(i * 7) < 0.66 { sw * 0.22 } else { sw * 0.72 };
+            let x = cx + (hash01(i * 3 + 1) - 0.5) * sw * 0.5;
             let y = hash01(i * 3 + 2) * horizon_y * 0.8;
             let tw = 0.5 + 0.5 * ((t * (1.0 + hash01(i) * 3.0) + i as f32).sin());
-            let a = (0.10 + 0.40 * feat.treble) * tw;
-            draw_rectangle(x, y, 2.0, 2.0, Color::new(0.9, 0.9, 1.0, a));
+            let a = (0.08 + 0.32 * feat.treble) * tw;
+            draw_rectangle(x, y, 2.0, 2.0, Color::new(SPEC.r, SPEC.g, SPEC.b, a));
         }
-        // The sun swells with bass.
+        // The sun swells with bass — off-center, warm amber.
         let sun_r = sh * (0.085 + 0.025 * feat.bass);
-        let sun_c = Color::new(0.95, 0.60, 0.42, 0.9);
-        draw_circle(sw * 0.5, horizon_y * 0.86, sun_r, sun_c);
-        draw_circle(sw * 0.5, horizon_y * 0.86, sun_r * 0.72, Color::new(0.99, 0.78, 0.55, 0.95));
+        let (sx, sy) = (sw * 0.62, horizon_y * 0.84);
+        draw_circle(sx, sy, sun_r, Color::new(AMBER.r, AMBER.g, AMBER.b, 0.9));
+        draw_circle(sx, sy, sun_r * 0.72, Color::new(AMBER_GLOW.r, AMBER_GLOW.g, AMBER_GLOW.b, 0.95));
         // Far skyline silhouettes = the spectrum.
         let n = feat.bands.len();
         let bw = sw / n as f32;
@@ -436,7 +439,7 @@ impl Mode for Surfer {
                 let p = vec3(side * (ROAD_HALF + 1.1), 0.45 + wave[si] * 1.1, z);
                 if let Some(q) = prev {
                     let c = fog(
-                        Color::new(0.50 + 0.3 * feat.treble, 0.68, 0.82, 0.9),
+                        Color::new((TEAL.r + 0.35 * feat.treble).min(1.0), TEAL.g, TEAL.b, 0.9),
                         -z,
                     );
                     draw_line_3d(q, p, c);
@@ -495,9 +498,9 @@ impl Mode for Surfer {
 
         // Trains (the swerve events). Windows glow with the mids.
         let train_colors = [
-            Color::new(0.55, 0.22, 0.24, 1.0),
-            Color::new(0.20, 0.38, 0.42, 1.0),
-            Color::new(0.28, 0.27, 0.45, 1.0),
+            Color::new(0.22, 0.30, 0.33, 1.0), // teal-slate
+            Color::new(0.16, 0.18, 0.22, 1.0), // slate
+            Color::new(0.26, 0.19, 0.14, 1.0), // ember
         ];
         for tr in &self.trains {
             let z_front = -(tr.d - d_now);
@@ -608,6 +611,10 @@ impl Mode for Surfer {
         box_outlined(vec3(px + lean * 0.10, base + 0.74, 0.0), vec3(0.46, 0.58, 0.30), PLAYER_BODY);
         box_outlined(vec3(px + lean * 0.22, base + 1.20, 0.0), vec3(0.27, 0.27, 0.27), PLAYER_SKIN);
 
+        // Filmic finish (vignette + grain) over the composited 3D frame, drawn
+        // in 2D into the same target so play and export match the other modes.
+        view::apply_screen_camera();
+        style::finish(t);
         set_default_camera();
     }
 }

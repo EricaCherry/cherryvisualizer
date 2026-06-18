@@ -15,6 +15,15 @@ no install, no server. One double-clickable executable, written in Rust.
 | Spectrogram | Starfield |
 | ![Spectrogram](docs/screenshots/spectrogram-rust.png) | ![Starfield](docs/screenshots/starfield-rust.png) |
 
+## The look
+
+Every mode shares one art direction — *Dusk Encom*: a deep, slightly-cool
+near-black holds most of the frame; color is mapped to **energy, not index**
+(quiet sits in a calm teal family, loud lights up a single warm amber hero), and
+the whole frame is finished with a graded backdrop, a soft vignette, and fine
+film grain. No rainbow ramps, no neon — it's graded like one photographed frame,
+not six screensavers.
+
 ## The modes
 
 Six so far, mixing the flagship "the audio plays the game" modes with the
@@ -23,21 +32,24 @@ classic music-visualizer staples:
 **Waveform Breakout** — breakout with no player and no paddle sprite: **the live
 waveform IS the paddle.** It forms a deforming surface along the bottom of the
 arena that bats the ball up with power taken from the music's loudness. The
-ball breaks the bricks (each column lit by its own frequency band); strong
-beats kick the ball, and the wall doesn't regenerate, so a song slowly
-demolishes it.
+bricks are a lit cool wall (bonded courses, depth-shaded by row); the amber ball
+is the single hero. Strong beats kick the ball, and the wall doesn't regenerate,
+so a song slowly demolishes it.
 
-**Spectrum** — the classic Winamp-style frequency bars, with peak-hold caps
-that fall under gravity, a translucent reflection, and a beat-driven flush.
+**Spectrum** — frequency bars graded by energy: the whole bank sits in one cool
+teal family separated by brightness, and only the single loudest band tips warm
+as the hero. Log-weighted, jittered widths over an off-center baseline.
 
-**Oscilloscope** — the raw waveform drawn as a glowing scope trace with
-phosphor-style persistence: older sweeps fade behind the bright live one.
+**Oscilloscope** — the raw waveform as a phosphor scope trace: one crisp teal
+line whose loud crests glow amber, with older sweeps fading behind it.
 
-**Spectrogram** — a scrolling time–frequency waterfall; the whole spectrum
-painted as heat (deep blue through green to white-hot), newest at the right.
+**Spectrogram** — a scrolling time–frequency waterfall painted as heat in the
+master palette: quiet bins recede into the ink floor, loud ones burn up to
+amber and cream. Newest column at the right.
 
 **Starfield** — the demoscene/screensaver warp-stars, flown by the music:
-loudness sets the speed and every beat punches the field into hyperspace.
+loudness sets the speed and every beat punches the field into hyperspace. Far
+stars are dim teal, near ones warm to amber, the closest tip to cream.
 
 **Beat Surfer** — a 3D lane runner (think Subway Surfers), played entirely by
 the music. Cherry pre-analyzes the whole track at load and turns the beat grid
@@ -98,8 +110,10 @@ src/
   audio.rs         playback, the master clock, volume + seek (rodio)
   track.rs         decode to PCM + offline pre-analysis (beat grid, loudness)
   analysis.rs      per-frame FFT features (32 log bands, bass/mid/treble, rms)
-  view.rs          world space -> letterboxed viewport; shared palette + the
-                   offscreen-render plumbing the exporter uses
+  view.rs          world space -> letterboxed viewport + the offscreen-render
+                   plumbing the exporter uses
+  style.rs         the shared art direction: palette, energy->color grade,
+                   graded backdrop, vignette + film-grain finish
   export.rs        offscreen render -> raw frames -> ffmpeg -> MP4 (+ audio mux)
   modes/
     mod.rs         the Mode trait + the Param settings system

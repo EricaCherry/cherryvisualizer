@@ -1,16 +1,19 @@
-//! Spectrum — the classic Winamp-style frequency-bar visualizer.
+//! Spectrum — frequency bars, art-directed.
 //!
-//! 32 log-spaced bands rise from a center baseline with peak-hold caps that
-//! fall under gravity, a translucent reflection below, and a beat-driven
-//! background flush. It reads only `Features` (no physics, no profile), so it
-//! is the simplest "classic" mode and a clean reference for new ones.
+//! 32 log-spaced bands rise from an off-center baseline with peak-hold caps
+//! that fall under gravity. Color is mapped to ENERGY, not band index: the
+//! whole bank sits in one cool teal family separated by brightness, and only
+//! the single loudest band tips warm (amber cap + cream tip) as the one hero.
+//! Bar widths are log-weighted and jittered so it reads as designed, not as a
+//! mechanical comb.
 
 use macroquad::prelude::*;
 
 use crate::analysis::N_BANDS;
 use crate::modes::{FrameCtx, Mode, Param};
+use crate::style::{self, hash01, mix, smoothstep, with_alpha, AMBER, AMBER_GLOW, SPEC, TEAL, TEAL_DEEP};
 use crate::track::Track;
-use crate::view::{hsl, View, AH, AW, BG};
+use crate::view::{View, AH, AW};
 
 pub struct Spectrum {
     heights: [f32; N_BANDS],
@@ -43,7 +46,7 @@ impl Mode for Spectrum {
     }
 
     fn about(&self) -> &'static str {
-        "Classic frequency bars with peak-hold caps and a mirrored reflection."
+        "Frequency bars graded by energy — a cool field with one warm hero band."
     }
 
     fn params(&self) -> Vec<Param> {
@@ -98,35 +101,65 @@ impl Mode for Spectrum {
         }
     }
 
-    fn draw(&self, _ctx: &FrameCtx) {
+    fn draw(&self, ctx: &FrameCtx) {
         let v = View::fit_world(AW, AH);
-        let bg = Color::new(BG.r + self.flash * 0.10, BG.g + self.flash * 0.05, BG.b + self.flash * 0.12, 1.0);
-        clear_background(bg);
-
-        let base = AH * 0.50;
-        let max_h = AH * 0.46;
-        let slot = AW / N_BANDS as f32;
-        let bw = slot * (1.0 - self.gap.clamp(0.0, 0.9));
-        let pad = (slot - bw) * 0.5;
-
-        for i in 0..N_BANDS {
-            let h = (self.heights[i] * max_h).max(0.02);
-            let x = i as f32 * slot + pad;
-            let hue = 0.58 - i as f32 / N_BANDS as f32 * 0.66;
-            let c = hsl(hue, 0.55, 0.50 + 0.12 * self.heights[i]);
-
-            // Reflection below the baseline (translucent, half height).
-            v.rect(x, base, bw, h * 0.55, Color::new(c.r, c.g, c.b, 0.18));
-            // The bar.
-            v.rect(x, base + h, bw, h, c);
-            // Bright tip.
-            let tip = (h * 0.12).min(0.14);
-            v.rect(x, base + h, bw, tip, Color::new((c.r + 0.3).min(1.0), (c.g + 0.3).min(1.0), (c.b + 0.3).min(1.0), 1.0));
-            // Peak cap.
-            let cap = self.caps[i] * max_h;
-            v.rect(x, base + cap + 0.07, bw, 0.05, Color::new(0.92, 0.95, 1.0, 0.9));
+        style::backdrop();
+        if self.flash > 0.001 {
+            // Beats flush warm, not cool.
+            v.rect(0.0, AH, AW, AH, with_alpha(AMBER_GLOW, self.flash * 0.06));
         }
 
-        v.line(0.0, base, AW, base, 2.0, Color::new(0.5, 0.55, 0.65, 0.45));
+        // The hero is the single loudest band; only it is allowed to go warm.
+        let hero = (0..N_BANDS)
+            .max_by(|&a, &b| self.heights[a].partial_cmp(&self.heights[b]).unwrap_or(std::cmp::Ordering::Equal))
+            .unwrap_or(0);
+
+        let base = AH * 0.42; // off-center baseline -> asymmetric negative space
+        let max_h = AH * 0.52;
+        let margin = 0.35;
+        let usable = AW - margin * 2.0;
+        // Log-ish bar widths (wider lows, narrower highs) instead of 32 clones.
+        let weight = |i: usize| 1.0 - 0.5 * (i as f32 / N_BANDS as f32);
+        let wsum: f32 = (0..N_BANDS).map(weight).sum();
+        let gap = self.gap.clamp(0.0, 0.6);
+
+        let mut x = margin;
+        for i in 0..N_BANDS {
+            let e = self.heights[i];
+            let slot = weight(i) / wsum * usable;
+            let jw = 1.0 + (hash01(i as i32 * 7 + 1) - 0.5) * 0.12; // width ±6%
+            let bw = (slot * (1.0 - gap) * jw).max(0.04);
+            let bx = x + (slot - bw) * 0.5;
+            let by = base + (hash01(i as i32 * 13 + 3) - 0.5) * 0.03 * AH; // baseline jitter
+            let h = (e * max_h).max(0.012);
+            let hero_bar = i == hero && e > 0.05;
+
+            // Body is one cool family separated by brightness; only the hero
+            // bar tips toward amber as it gets loud.
+            let mut c = mix(TEAL_DEEP, TEAL, smoothstep(0.04, 0.78, e));
+            if hero_bar {
+                c = mix(c, AMBER, smoothstep(0.30, 0.95, e));
+            }
+
+            // Short graded underglow (replaces the stacked-alpha mirror).
+            v.rect(bx, by, bw, (h * 0.16).min(0.45), with_alpha(c, 0.10));
+            // The bar.
+            v.rect(bx, by + h, bw, h, c);
+            // Tip lifted within the bar's own family (no white).
+            v.rect(bx, by + h, bw, (h * 0.10).min(0.10), mix(c, SPEC, 0.30));
+
+            // Caps: dim teal ticks, except the hero = amber cap + cream tip.
+            let cap = self.caps[i] * max_h;
+            if hero_bar {
+                v.rect(bx, by + cap + 0.10, bw, 0.07, AMBER);
+                v.rect(bx + bw * 0.28, by + cap + 0.18, bw * 0.44, 0.05, SPEC);
+            } else if e > 0.02 {
+                v.rect(bx, by + cap + 0.08, bw, 0.045, with_alpha(TEAL, 0.5));
+            }
+
+            x += slot;
+        }
+
+        style::finish(ctx.time);
     }
 }
