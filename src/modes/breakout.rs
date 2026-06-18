@@ -18,7 +18,7 @@ use std::sync::mpsc::{channel, Receiver};
 
 use crate::analysis::N_BANDS;
 use crate::modes::{FrameCtx, Mode, Param};
-use crate::style::{self, hash01, mix, with_alpha, AMBER, AMBER_GLOW, SLATE, SPEC, TEAL, TEAL_DEEP};
+use crate::style::{self, amber, amber_glow, hash01, mix, slate, spec, teal, teal_deep, with_alpha};
 use crate::track::Track;
 use crate::view::{View, AH, AW};
 
@@ -236,7 +236,7 @@ impl Breakout {
                     hw: bw,
                     hh: bh,
                     band: (c * N_BANDS / self.cols).min(N_BANDS - 1),
-                    color: mix(TEAL_DEEP, TEAL, (tone * lift).clamp(0.0, 1.0)),
+                    color: mix(teal_deep(), teal(), (tone * lift).clamp(0.0, 1.0)),
                     alive: true,
                     anim: 1.0,
                 });
@@ -500,11 +500,11 @@ impl Mode for Breakout {
             let y = cy + (hash01(i * 3 + 2) - 0.5) * 4.6; // taller spread than wide
             let tw = 0.5 + 0.5 * (ctx.time * (0.6 + hash01(i) * 2.0) + i as f32).sin();
             let a = (0.03 + 0.10 * feat.treble) * tw;
-            v.circle(x, y, 0.025, with_alpha(mix(TEAL, SPEC, 0.4), a));
+            v.circle(x, y, 0.025, with_alpha(mix(teal(), spec(), 0.4), a));
         }
 
         // Frame rails.
-        let rail = mix(SLATE, TEAL_DEEP, 0.4);
+        let rail = mix(slate(), teal_deep(), 0.4);
         v.rect(-0.08, AH, 0.08, AH, rail);
         v.rect(AW, AH, 0.08, AH, rail);
         v.rect(-0.08, AH + 0.08, AW + 0.16, 0.08, rail);
@@ -515,11 +515,11 @@ impl Mode for Breakout {
                 continue;
             }
             let e = feat.bands[b.band];
-            let c = mix(b.color, SPEC, (e * 0.4).min(0.45));
+            let c = mix(b.color, spec(), (e * 0.4).min(0.45));
             let (hw, hh) = (b.hw * b.anim, b.hh * b.anim);
             let (x, y_top, w, h) = (b.x - hw, b.y + hh, hw * 2.0, hh * 2.0);
             v.rect(x, y_top, w, h, c);
-            v.rect(x, y_top, w, h * 0.22, mix(c, SPEC, 0.18)); // slim top bevel
+            v.rect(x, y_top, w, h * 0.22, mix(c, spec(), 0.18)); // slim top bevel
         }
 
         for s in &self.shards {
@@ -530,14 +530,14 @@ impl Mode for Breakout {
         // Ball trail: a warm echo of the hero.
         for (i, &(x, y)) in self.trail.iter().enumerate() {
             let a = i as f32 / self.trail.len().max(1) as f32 * 0.30;
-            v.circle(x, y, BALL_R * (0.35 + 0.45 * a), with_alpha(AMBER_GLOW, a));
+            v.circle(x, y, BALL_R * (0.35 + 0.45 * a), with_alpha(amber_glow(), a));
         }
 
         // Waveform paddle: one crisp teal crest over a thin shadow and a short
         // under-band. Flash/beat tints it warm. No stacked glow.
         let flash = self.paddle_flash;
-        let crest = mix(TEAL, AMBER, (flash * 0.7).min(0.7));
-        let band = with_alpha(TEAL, 0.07 + flash * 0.04);
+        let crest = mix(teal(), amber(), (flash * 0.7).min(0.7));
+        let band = with_alpha(teal(), 0.07 + flash * 0.04);
         for i in 1..self.paddle_world.len() {
             let (x0, y0) = self.paddle_world[i - 1];
             let (x1, y1) = self.paddle_world[i];
@@ -547,13 +547,13 @@ impl Mode for Breakout {
             let dd = v.xy(x0, (y0 - 0.55).max(0.0));
             draw_triangle(a.into(), b.into(), cc.into(), band);
             draw_triangle(a.into(), cc.into(), dd.into(), band);
-            v.line(x0, y0 - 0.04, x1, y1 - 0.04, 2.0, with_alpha(SLATE, 0.85));
+            v.line(x0, y0 - 0.04, x1, y1 - 0.04, 2.0, with_alpha(slate(), 0.85));
             v.line(x0, y0, x1, y1, 2.5 + flash * 1.2, crest);
         }
 
         // Ball: the single hero.
         let pos = self.bodies[self.ball].translation();
-        style::glow_core(&v, pos.x, pos.y, BALL_R, AMBER);
+        style::glow_core(&v, pos.x, pos.y, BALL_R, amber());
 
         style::finish(ctx.time);
     }

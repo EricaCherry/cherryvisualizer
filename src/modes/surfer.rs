@@ -6,7 +6,7 @@
 //!     scheduled half a second before they arrive;
 //!   - every other beat becomes a BARRIER, and the jump is timed so its apex
 //!     lands exactly on the beat (T-Rex timing: ~0.55 s of air);
-//!   - offline treble runs become COIN TRAILS laid along the player's own
+//!   - offline treble runs become coin TRAILS laid along the player's own
 //!     future path — curving through swerves, arcing over jumps — so every
 //!     coin is collected exactly on the music.
 //!
@@ -25,7 +25,7 @@
 use macroquad::prelude::*;
 
 use crate::modes::{FrameCtx, Mode};
-use crate::style::{self, hash01, AMBER, AMBER_GLOW, SPEC, TEAL};
+use crate::style::{self, amber, amber_glow, hash01, spec, teal};
 use crate::track::Track;
 use crate::view;
 
@@ -50,10 +50,10 @@ const SWITCH_DUR: f32 = 0.35;
 // Palette — re-keyed to the shared "Dusk Encom" master palette so Surfer reads
 // as the same film as the 2D modes (dusk, flat, no neon).
 const HORIZON: Color = Color::new(0.115, 0.10, 0.105, 1.0); // warm dusk slate
-const SKY_TOP: Color = crate::style::INK;
 const ROAD: Color = Color::new(0.10, 0.12, 0.14, 1.0);
 const GROUND: Color = Color::new(0.08, 0.09, 0.11, 1.0);
-const COIN: Color = crate::style::AMBER;
+// sky_top (= theme ink) and coin (= theme hero) are now theme-driven, so they
+// are read at the top of draw() instead of being consts.
 const PLAYER_BODY: Color = Color::new(0.78, 0.27, 0.30, 1.0); // cherry red — the brand hero
 const PLAYER_SKIN: Color = Color::new(0.88, 0.78, 0.66, 1.0);
 
@@ -318,6 +318,8 @@ impl Mode for Surfer {
     fn draw(&self, ctx: &FrameCtx) {
         let t = ctx.time;
         let feat = ctx.feat;
+        let sky_top = style::ink(); // theme background
+        let coin = style::amber(); // theme hero (coins)
         let d_now = self.dist_at(t);
         let px = self.lane_x_at(t);
         let py = self.jump_y_at(t);
@@ -329,16 +331,16 @@ impl Mode for Surfer {
         // In normal play this is the default screen camera; during export it
         // points the 2D pass at the offscreen target.
         view::apply_screen_camera();
-        clear_background(SKY_TOP);
+        clear_background(sky_top);
         let (sw, sh) = (view::screen_w(), view::screen_h());
         let horizon_y = sh * 0.52;
         let strips = 14;
         for i in 0..strips {
             let k = i as f32 / strips as f32;
             let c = Color::new(
-                SKY_TOP.r + (HORIZON.r - SKY_TOP.r) * k,
-                SKY_TOP.g + (HORIZON.g - SKY_TOP.g) * k,
-                SKY_TOP.b + (HORIZON.b - SKY_TOP.b) * k,
+                sky_top.r + (HORIZON.r - sky_top.r) * k,
+                sky_top.g + (HORIZON.g - sky_top.g) * k,
+                sky_top.b + (HORIZON.b - sky_top.b) * k,
                 1.0,
             );
             draw_rectangle(0.0, horizon_y * k, sw, horizon_y / strips as f32 + 1.0, c);
@@ -352,15 +354,15 @@ impl Mode for Surfer {
             let y = hash01(i * 3 + 2) * horizon_y * 0.8;
             let tw = 0.5 + 0.5 * ((t * (1.0 + hash01(i) * 3.0) + i as f32).sin());
             let a = (0.08 + 0.32 * feat.treble) * tw;
-            draw_rectangle(x, y, star_px, star_px, Color::new(SPEC.r, SPEC.g, SPEC.b, a));
+            draw_rectangle(x, y, star_px, star_px, Color::new(spec().r, spec().g, spec().b, a));
         }
         // The sun swells with bass — off-center, warm amber, with a cream core
         // so it reads as the one light source / hero of the frame.
         let sun_r = sh * (0.115 + 0.03 * feat.bass);
         let (sx, sy) = (sw * 0.62, horizon_y * 0.84);
-        draw_circle(sx, sy, sun_r, Color::new(AMBER.r, AMBER.g, AMBER.b, 0.92));
-        draw_circle(sx, sy, sun_r * 0.66, Color::new(AMBER_GLOW.r, AMBER_GLOW.g, AMBER_GLOW.b, 0.95));
-        draw_circle(sx, sy, sun_r * 0.34, Color::new(SPEC.r, SPEC.g, SPEC.b, 0.9));
+        draw_circle(sx, sy, sun_r, Color::new(amber().r, amber().g, amber().b, 0.92));
+        draw_circle(sx, sy, sun_r * 0.66, Color::new(amber_glow().r, amber_glow().g, amber_glow().b, 0.95));
+        draw_circle(sx, sy, sun_r * 0.34, Color::new(spec().r, spec().g, spec().b, 0.9));
         // Far skyline silhouettes = the spectrum.
         let n = feat.bands.len();
         let bw = sw / n as f32;
@@ -437,7 +439,7 @@ impl Mode for Surfer {
                 let p = vec3(side * (ROAD_HALF + 1.1), 0.45 + wave[si] * 1.1, z);
                 if let Some(q) = prev {
                     let c = fog(
-                        Color::new((TEAL.r + 0.35 * feat.treble).min(1.0), TEAL.g, TEAL.b, 0.9),
+                        Color::new((teal().r + 0.35 * feat.treble).min(1.0), teal().g, teal().b, 0.9),
                         -z,
                     );
                     draw_line_3d(q, p, c);
@@ -541,7 +543,7 @@ impl Mode for Surfer {
             // Barriers sit cool teal and only pulse warm on their exact beat, so
             // the sun stays the single sustained warm hero.
             let near = (1.0 - ((b.t - t).abs() / 0.18).min(1.0)).max(0.0);
-            let c = style::mix(Color::new(0.28, 0.40, 0.42, 1.0), AMBER, near * 0.7);
+            let c = style::mix(Color::new(0.28, 0.40, 0.42, 1.0), amber(), near * 0.7);
             for side in [-1.0f32, 1.0] {
                 box_outlined(vec3(b.x + side * 0.8, 0.42, z), vec3(0.13, 0.84, 0.13), c);
             }
@@ -562,9 +564,9 @@ impl Mode for Surfer {
             let e3 = vec3(-a.sin() * 0.05, 0.0, a.cos() * 0.05);
             let gold = fog(
                 Color::new(
-                    COIN.r + 0.08 * feat.treble,
-                    COIN.g + 0.10 * feat.treble,
-                    COIN.b,
+                    coin.r + 0.08 * feat.treble,
+                    coin.g + 0.10 * feat.treble,
+                    coin.b,
                     1.0,
                 ),
                 -z,

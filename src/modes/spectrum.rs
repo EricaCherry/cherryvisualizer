@@ -11,7 +11,7 @@ use macroquad::prelude::*;
 
 use crate::analysis::N_BANDS;
 use crate::modes::{FrameCtx, Mode, Param};
-use crate::style::{self, hash01, mix, smoothstep, with_alpha, AMBER, SPEC, TEAL, TEAL_DEEP};
+use crate::style::{self, amber, hash01, mix, smoothstep, spec, teal, teal_deep, with_alpha};
 use crate::track::Track;
 use crate::view::{View, AH, AW};
 
@@ -107,7 +107,7 @@ impl Mode for Spectrum {
         if self.flash > 0.001 {
             // Beats breathe the cool body faintly; amber stays reserved for the
             // hero, so the negative space never warms.
-            v.rect(0.0, AH, AW, AH, with_alpha(TEAL_DEEP, self.flash * 0.05));
+            v.rect(0.0, AH, AW, AH, with_alpha(teal_deep(), self.flash * 0.05));
         }
 
         // The hero is the single loudest band; only it is allowed to go warm.
@@ -135,9 +135,9 @@ impl Mode for Spectrum {
 
             // Body is one cool family separated by brightness; only the hero
             // bar tips toward amber as it gets loud.
-            let mut c = mix(TEAL_DEEP, TEAL, smoothstep(0.04, 0.78, e));
+            let mut c = mix(teal_deep(), teal(), smoothstep(0.04, 0.78, e));
             if hero_bar {
-                c = mix(c, AMBER, smoothstep(0.30, 0.95, e));
+                c = mix(c, amber(), smoothstep(0.30, 0.95, e));
             }
 
             // Quiet bars recede toward the backdrop so the loud (and hero) bars
@@ -148,15 +148,15 @@ impl Mode for Spectrum {
             // The bar.
             v.rect(bx, by + h, bw, h, with_alpha(c, bar_a));
             // Tip lifted within the bar's own family (no white).
-            v.rect(bx, by + h, bw, (h * 0.10).min(0.10), with_alpha(mix(c, SPEC, 0.30), bar_a));
+            v.rect(bx, by + h, bw, (h * 0.10).min(0.10), with_alpha(mix(c, spec(), 0.30), bar_a));
 
             // Caps: dim teal ticks, except the hero = amber cap + cream tip.
             let cap = self.caps[i] * max_h;
             if hero_bar {
-                v.rect(bx, by + cap + 0.10, bw, 0.07, AMBER);
-                v.rect(bx + bw * 0.28, by + cap + 0.18, bw * 0.44, 0.05, SPEC);
+                v.rect(bx, by + cap + 0.10, bw, 0.07, amber());
+                v.rect(bx + bw * 0.28, by + cap + 0.18, bw * 0.44, 0.05, spec());
             } else if e > 0.02 {
-                v.rect(bx, by + cap + 0.08, bw, 0.045, with_alpha(TEAL, 0.5));
+                v.rect(bx, by + cap + 0.08, bw, 0.045, with_alpha(teal(), 0.5));
             }
 
             x += slot;

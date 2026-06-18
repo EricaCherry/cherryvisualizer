@@ -11,7 +11,7 @@ use std::collections::VecDeque;
 use macroquad::prelude::*;
 
 use crate::modes::{FrameCtx, Mode, Param};
-use crate::style::{self, mix, smoothstep, with_alpha, AMBER, TEAL, TEAL_DEEP};
+use crate::style::{self, amber, mix, smoothstep, teal, teal_deep, with_alpha};
 use crate::track::Track;
 use crate::view::{View, AH, AW};
 
@@ -84,7 +84,7 @@ impl Mode for Scope {
 
         // Dim reference line — kept faint so it doesn't pull the eye back to
         // center against the deliberately off-center band.
-        v.line(0.0, cy, AW, cy, 1.0, with_alpha(TEAL_DEEP, 0.25));
+        v.line(0.0, cy, AW, cy, 1.0, with_alpha(teal_deep(), 0.25));
 
         let n = self.history.len().max(1);
         for (k, row) in self.history.iter().enumerate() {
@@ -101,7 +101,7 @@ impl Mode for Scope {
                 // Only the very loudest crests tip amber (tighter amber discipline).
                 let mag = row[i - 1].abs().max(row[i].abs());
                 let hot = smoothstep(0.70, 0.98, mag * (0.6 + feat.rms));
-                let c = mix(TEAL, AMBER, hot);
+                let c = mix(teal(), amber(), hot);
                 v.line(x0, y0, x1, y1, width, with_alpha(c, fade));
             }
         }

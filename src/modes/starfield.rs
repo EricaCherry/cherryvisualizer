@@ -11,7 +11,7 @@
 use macroquad::prelude::*;
 
 use crate::modes::{FrameCtx, Mode, Param};
-use crate::style::{self, mix, smoothstep, with_alpha, AMBER, TEAL, TEAL_DEEP};
+use crate::style::{self, amber, mix, smoothstep, teal, teal_deep, with_alpha};
 use crate::track::Track;
 use crate::view::{View, AH, AW};
 
@@ -164,8 +164,8 @@ impl Mode for Starfield {
             let Some((px, py, r)) = project(s.x, s.y, s.z) else { continue };
             let depth = 1.0 - s.z / FAR; // 0 far .. 1 near
             // Cool field; only near stars warm toward amber.
-            let base = mix(TEAL_DEEP, TEAL, smoothstep(0.0, 1.0, depth));
-            let c = mix(base, AMBER, smoothstep(warm_gate, 1.0, depth));
+            let base = mix(teal_deep(), teal(), smoothstep(0.0, 1.0, depth));
+            let c = mix(base, amber(), smoothstep(warm_gate, 1.0, depth));
             // Steep falloff so far stars sink into ink instead of all glowing.
             let bright = (0.12 + depth * depth * 1.1).min(1.0);
 
@@ -175,7 +175,7 @@ impl Mode for Starfield {
                 }
             }
             if Some(i) == hero {
-                style::glow_core(&v, px, py, r.max(0.05), AMBER);
+                style::glow_core(&v, px, py, r.max(0.05), amber());
             } else {
                 v.circle(px, py, r, with_alpha(c, bright));
             }

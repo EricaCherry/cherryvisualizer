@@ -90,6 +90,7 @@ struct Args {
     export_frame: Option<String>,
     /// `--bench [mode]`: time update+draw per mode headless, print a table, exit.
     bench: Option<String>,
+    theme: Option<usize>,
     res: Option<u32>,
     fps: Option<u32>,
 }
@@ -123,6 +124,7 @@ fn parse_args() -> Args {
                 }
                 out.bench = Some(mode.unwrap_or_default());
             }
+            "--theme" => out.theme = it.next().and_then(|v| v.parse().ok()),
             "--res" => out.res = it.next().and_then(|v| v.parse().ok()),
             "--fps" => out.fps = it.next().and_then(|v| v.parse().ok()),
             "--help" | "-h" => {
@@ -148,6 +150,7 @@ fn print_help() {
     println!("  --bench [mode]           time update+draw per mode, print a table, exit");
     println!("  --shot <mode|ui>         render a headless PNG (dev), then exit");
     println!("  --gen-wav <path>         write a small test WAV, then exit");
+    println!("  --theme <0-5>            color theme (Dusk Encom/Sunset/Nyx/Oil/Forest/Ember)");
     println!("  --res <720|1080|1440>    export/preview resolution (default 1080)");
     println!("  --fps <30|60>            export/preview frame rate (default 60)");
     println!("  --help, -h               show this help");
@@ -220,6 +223,7 @@ enum Action {
     Seek(f32),
     SetVolume(f32),
     RestartMode,
+    SetTheme(usize),
     StartExport(ExportSettings),
     CancelExport,
 }
@@ -235,6 +239,8 @@ struct UiData {
     modes: Vec<(&'static str, &'static str)>,
     sel: usize,
     params: Vec<Param>,
+    themes: Vec<&'static str>,
+    theme: usize,
     loading: bool,
     exporting: bool,
     export_progress: f32,
@@ -293,6 +299,10 @@ async fn main() {
     }
     for m in modes.iter_mut() {
         m.reset(audio.track());
+    }
+
+    if let Some(th) = args.theme {
+        style::set_theme(th);
     }
 
     let export_settings = settings_from(args.res.unwrap_or(1080), args.fps.unwrap_or(60));
@@ -400,7 +410,7 @@ async fn main() {
                     }
                 }
             }
-            clear_background(view::BG);
+            clear_background(style::ink());
             if let Some(exp) = cli_exporter.as_mut() {
                 match exp.step(audio.track(), 50) {
                     Some(Ok(p)) => {
@@ -500,6 +510,8 @@ async fn main() {
                 modes: modes.iter().map(|m| (m.name(), m.about())).collect(),
                 sel,
                 params: modes[sel].params(),
+                themes: style::themes().iter().map(|t| t.name).collect(),
+                theme: style::current_theme(),
                 loading: loading.is_some(),
                 exporting: exporter.is_some(),
                 export_progress: exporter.as_ref().map_or(0.0, |e| e.progress()),
@@ -557,6 +569,7 @@ async fn main() {
                         modes[sel].reset(audio.track());
                         last_t = 0.0;
                     }
+                    Action::SetTheme(i) => style::set_theme(i),
                     Action::StartExport(settings) => {
                         if exporter.is_none() && save_dialog.is_none() {
                             pending_settings = Some(settings);
@@ -577,7 +590,7 @@ async fn main() {
         if let Some(exp) = exporter.as_mut() {
             // Export owns the frame: it renders offscreen at the export size.
             set_default_camera();
-            clear_background(view::BG);
+            clear_background(style::ink());
             match exp.step(audio.track(), 12) {
                 Some(Ok(p)) => {
                     export_status = format!("Saved {}", p.display());
@@ -844,8 +857,23 @@ fn tab_modes(ui: &mut egui::Ui, data: &UiData, actions: &mut Vec<Action>) {
 }
 
 fn tab_settings(ui: &mut egui::Ui, data: &UiData, actions: &mut Vec<Action>) {
-    let mode_name = data.modes.get(data.sel).map(|m| m.0).unwrap_or("");
+    // ---- theme (global, applies to every mode + exports) ------------------
     ui.add_space(4.0);
+    ui.label(egui::RichText::new("Theme").strong());
+    egui::ComboBox::from_id_salt("theme_combo")
+        .selected_text(data.themes.get(data.theme).copied().unwrap_or("?"))
+        .show_ui(ui, |ui| {
+            for (i, name) in data.themes.iter().enumerate() {
+                if ui.selectable_label(i == data.theme, *name).clicked() {
+                    actions.push(Action::SetTheme(i));
+                }
+            }
+        });
+    ui.add_space(8.0);
+    ui.separator();
+    ui.add_space(4.0);
+
+    let mode_name = data.modes.get(data.sel).map(|m| m.0).unwrap_or("");
     ui.label(egui::RichText::new(format!("{mode_name} settings")).strong());
     ui.add_space(6.0);
     if data.params.is_empty() {

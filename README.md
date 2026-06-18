@@ -24,6 +24,19 @@ the whole frame is finished with a graded backdrop, a soft vignette, and fine
 film grain. No rainbow ramps, no neon — it's graded like one photographed frame,
 not six screensavers.
 
+### Themes
+
+That art direction is **theme-driven**: the eight palette *roles* are fixed, but
+their colors come from the active theme, so one switch re-skins every mode (and
+its exports). Cherry ships six, mapped from artistic palettes on
+[Lospec](https://lospec.com/palette-list) — *Dusk Encom* (teal/amber), *Sunset*
+(SLSO8 blue→peach), *Nyx*, *Oil Dream*, *Forest*, and *Ember* (a warm world with
+a cool hero). Pick one in **Settings → Theme**, or `--theme <0-5>` on the CLI.
+
+| Sunset | Ember |
+|---|---|
+| ![Sunset theme](docs/screenshots/theme-sunset.png) | ![Ember theme](docs/screenshots/theme-ember.png) |
+
 ## The modes
 
 Six so far, mixing the flagship "the audio plays the game" modes with the

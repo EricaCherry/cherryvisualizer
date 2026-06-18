@@ -122,8 +122,5 @@ impl View {
     }
 }
 
-// ---- palette ---------------------------------------------------------------
-// The shared palette + energy grade live in `style`; this alias keeps the few
-// call sites that just want "the background color" terse.
-
-pub const BG: Color = crate::style::INK;
+// The shared palette + energy grade live in `style` (theme-driven); call sites
+// that want the background color use `style::ink()`.
