@@ -11,7 +11,7 @@ use macroquad::prelude::*;
 
 use crate::analysis::N_BANDS;
 use crate::modes::{FrameCtx, Mode, Param};
-use crate::style::{self, hash01, mix, smoothstep, with_alpha, AMBER, AMBER_GLOW, SPEC, TEAL, TEAL_DEEP};
+use crate::style::{self, hash01, mix, smoothstep, with_alpha, AMBER, SPEC, TEAL, TEAL_DEEP};
 use crate::track::Track;
 use crate::view::{View, AH, AW};
 
@@ -105,8 +105,9 @@ impl Mode for Spectrum {
         let v = View::fit_world(AW, AH);
         style::backdrop();
         if self.flash > 0.001 {
-            // Beats flush warm, not cool.
-            v.rect(0.0, AH, AW, AH, with_alpha(AMBER_GLOW, self.flash * 0.06));
+            // Beats breathe the cool body faintly; amber stays reserved for the
+            // hero, so the negative space never warms.
+            v.rect(0.0, AH, AW, AH, with_alpha(TEAL_DEEP, self.flash * 0.05));
         }
 
         // The hero is the single loudest band; only it is allowed to go warm.
@@ -127,10 +128,10 @@ impl Mode for Spectrum {
         for i in 0..N_BANDS {
             let e = self.heights[i];
             let slot = weight(i) / wsum * usable;
-            let jw = 1.0 + (hash01(i as i32 * 7 + 1) - 0.5) * 0.12; // width ±6%
+            let jw = 1.0 + (hash01(i as i32 * 7 + 1) - 0.5) * 0.30; // width ±15%
             let bw = (slot * (1.0 - gap) * jw).max(0.04);
             let bx = x + (slot - bw) * 0.5;
-            let by = base + (hash01(i as i32 * 13 + 3) - 0.5) * 0.03 * AH; // baseline jitter
+            let by = base + (hash01(i as i32 * 13 + 3) - 0.5) * 0.05 * AH; // baseline jitter
             let h = (e * max_h).max(0.012);
             let hero_bar = i == hero && e > 0.05;
 
@@ -141,12 +142,15 @@ impl Mode for Spectrum {
                 c = mix(c, AMBER, smoothstep(0.30, 0.95, e));
             }
 
+            // Quiet bars recede toward the backdrop so the loud (and hero) bars
+            // own the value; the hero stays fully solid.
+            let bar_a = if hero_bar { 1.0 } else { 0.35 + 0.65 * e };
             // Short graded underglow (replaces the stacked-alpha mirror).
-            v.rect(bx, by, bw, (h * 0.16).min(0.45), with_alpha(c, 0.10));
+            v.rect(bx, by, bw, (h * 0.16).min(0.45), with_alpha(c, 0.10 * bar_a));
             // The bar.
-            v.rect(bx, by + h, bw, h, c);
+            v.rect(bx, by + h, bw, h, with_alpha(c, bar_a));
             // Tip lifted within the bar's own family (no white).
-            v.rect(bx, by + h, bw, (h * 0.10).min(0.10), mix(c, SPEC, 0.30));
+            v.rect(bx, by + h, bw, (h * 0.10).min(0.10), with_alpha(mix(c, SPEC, 0.30), bar_a));
 
             // Caps: dim teal ticks, except the hero = amber cap + cream tip.
             let cap = self.caps[i] * max_h;

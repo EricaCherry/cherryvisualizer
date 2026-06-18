@@ -534,7 +534,32 @@ async fn main() {
     }
 }
 
+/// egui theme keyed to the "Dusk Encom" palette so the app shell matches the
+/// canvas (no default IDE-grey panels or blue selection).
+fn cherry_visuals() -> egui::Visuals {
+    use egui::Color32;
+    let ink = Color32::from_rgb(11, 16, 20);
+    let slate = Color32::from_rgb(17, 24, 29);
+    let teal = Color32::from_rgb(63, 154, 160);
+    let amber = Color32::from_rgb(224, 138, 60);
+    let cream = Color32::from_rgb(236, 227, 207);
+    let mut v = egui::Visuals::dark();
+    v.panel_fill = slate;
+    v.window_fill = ink;
+    v.faint_bg_color = ink;
+    v.extreme_bg_color = ink;
+    v.override_text_color = Some(cream);
+    v.hyperlink_color = teal;
+    v.selection.bg_fill = teal.linear_multiply(0.45);
+    v.selection.stroke = egui::Stroke::new(1.0, teal);
+    v.widgets.hovered.weak_bg_fill = Color32::from_rgb(34, 48, 52);
+    v.widgets.active.weak_bg_fill = amber;
+    v.widgets.active.bg_fill = amber;
+    v
+}
+
 fn build_ui(ctx: &egui::Context, data: &UiData, ui: &mut UiState, actions: &mut Vec<Action>) {
+    ctx.set_visuals(cherry_visuals());
     // ---- menu bar ---------------------------------------------------------
     egui::TopBottomPanel::top("menu_bar").show(ctx, |bar| {
         egui::menu::bar(bar, |bar| {

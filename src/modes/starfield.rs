@@ -11,7 +11,7 @@
 use macroquad::prelude::*;
 
 use crate::modes::{FrameCtx, Mode, Param};
-use crate::style::{self, mix, smoothstep, with_alpha, AMBER_GLOW, SPEC, TEAL_DEEP};
+use crate::style::{self, mix, smoothstep, with_alpha, AMBER, TEAL, TEAL_DEEP};
 use crate::track::Track;
 use crate::view::{View, AH, AW};
 
@@ -54,10 +54,9 @@ impl Starfield {
     }
 
     fn new_star(&mut self, fresh: bool) -> Star {
-        // Cluster toward the vanishing point: a squared radius biases density
-        // inward, so it isn't a uniform scatter.
-        let r = self.rand();
-        let r = r * r;
+        // Bias density OUTWARD so there's no bright pile-up at the vanishing
+        // point (a radial-symmetry tell); the field fills, the center breathes.
+        let r = 0.2 + 0.8 * self.rand();
         let ang = self.rand() * std::f32::consts::TAU;
         let x = ang.cos() * r * self.spread;
         let y = ang.sin() * r * self.spread;
@@ -81,9 +80,9 @@ fn project(x: f32, y: f32, z: f32) -> Option<(f32, f32, f32)> {
         return None;
     }
     let f = AW * 0.9 / z;
-    let px = AW * 0.46 + x * f; // off dead-center -> not a bullseye
-    let py = AH * 0.47 + y * f;
-    let r = (0.13 * (1.0 - z / FAR)).max(0.018);
+    let px = AW * 0.41 + x * f; // well off dead-center -> not a bullseye
+    let py = AH * 0.43 + y * f;
+    let r = (0.15 * (1.0 - z / FAR)).max(0.014);
     Some((px, py, r))
 }
 
@@ -144,24 +143,42 @@ impl Mode for Starfield {
     fn draw(&self, ctx: &FrameCtx) {
         let v = View::fit_world(AW, AH);
         style::backdrop();
-        // The streak length grows with warp so beats feel like a punch.
-        let streak = (0.08 + self.warp * 0.9) * self.speed * ctx.dt;
+        // The streak length grows with warp so beats feel like a punch; a small
+        // floor keeps a hint of motion even in a still frame.
+        let streak = (0.05 + self.warp * 0.9) * self.speed * ctx.dt;
 
-        for s in &self.stars {
+        // The single nearest star is the hero (one glow-cored anchor).
+        let hero = self
+            .stars
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.z > NEAR * 0.5)
+            .min_by(|(_, a), (_, b)| a.z.partial_cmp(&b.z).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|(i, _)| i);
+
+        // Beats let a few more stars warm; otherwise the field stays cool and
+        // only the nearest stars carry any amber (warm coverage stays small).
+        let warm_gate = 0.80 - self.warp * 0.22;
+
+        for (i, s) in self.stars.iter().enumerate() {
             let Some((px, py, r)) = project(s.x, s.y, s.z) else { continue };
             let depth = 1.0 - s.z / FAR; // 0 far .. 1 near
-            // Cool + dim when far, warming toward amber as it nears; the closest
-            // few tip to cream.
-            let mut c = mix(TEAL_DEEP, AMBER_GLOW, smoothstep(0.0, 1.0, depth));
-            c = mix(c, SPEC, smoothstep(0.86, 1.0, depth));
-            let bright = (0.32 + depth * 0.9).min(1.0);
+            // Cool field; only near stars warm toward amber.
+            let base = mix(TEAL_DEEP, TEAL, smoothstep(0.0, 1.0, depth));
+            let c = mix(base, AMBER, smoothstep(warm_gate, 1.0, depth));
+            // Steep falloff so far stars sink into ink instead of all glowing.
+            let bright = (0.12 + depth * depth * 1.1).min(1.0);
 
-            if streak > 0.02 {
+            if streak > 0.01 {
                 if let Some((tx, ty, _)) = project(s.x, s.y, s.z + streak) {
                     v.line(tx, ty, px, py, (r * 90.0).max(1.0), with_alpha(c, 0.4 * bright));
                 }
             }
-            v.circle(px, py, r, with_alpha(c, bright));
+            if Some(i) == hero {
+                style::glow_core(&v, px, py, r.max(0.05), AMBER);
+            } else {
+                v.circle(px, py, r, with_alpha(c, bright));
+            }
         }
 
         style::finish(ctx.time);

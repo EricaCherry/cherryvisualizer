@@ -83,22 +83,23 @@ impl Mode for Scope {
         let amp = self.amp * (0.7 + feat.rms * 0.9);
 
         // Dim reference line.
-        v.line(0.0, cy, AW, cy, 1.0, with_alpha(TEAL_DEEP, 0.6));
+        v.line(0.0, cy, AW, cy, 1.0, with_alpha(TEAL_DEEP, 0.45));
 
         let n = self.history.len().max(1);
         for (k, row) in self.history.iter().enumerate() {
             let newest = k + 1 == n;
             let age = (k + 1) as f32 / n as f32; // 0 oldest .. 1 newest
-            let width = if newest { 2.2 } else { 1.3 };
-            let fade = if newest { 1.0 } else { age * age * 0.28 };
+            // Sharpen the hero (live trace) vs. body (older sweeps) value split.
+            let width = if newest { 2.5 } else { 1.2 };
+            let fade = if newest { 1.0 } else { age * age * 0.22 };
             for i in 1..NPTS {
                 let x0 = (i - 1) as f32 / (NPTS - 1) as f32 * AW;
                 let x1 = i as f32 / (NPTS - 1) as f32 * AW;
                 let y0 = cy + row[i - 1] * amp;
                 let y1 = cy + row[i] * amp;
-                // Loud excursions are the hot crests.
+                // Only the very loudest crests tip amber (tighter amber discipline).
                 let mag = row[i - 1].abs().max(row[i].abs());
-                let hot = smoothstep(0.45, 0.95, mag * (0.6 + feat.rms));
+                let hot = smoothstep(0.70, 0.98, mag * (0.6 + feat.rms));
                 let c = mix(TEAL, AMBER, hot);
                 v.line(x0, y0, x1, y1, width, with_alpha(c, fade));
             }

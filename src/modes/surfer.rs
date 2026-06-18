@@ -359,11 +359,13 @@ impl Mode for Surfer {
             let a = (0.08 + 0.32 * feat.treble) * tw;
             draw_rectangle(x, y, 2.0, 2.0, Color::new(SPEC.r, SPEC.g, SPEC.b, a));
         }
-        // The sun swells with bass — off-center, warm amber.
-        let sun_r = sh * (0.085 + 0.025 * feat.bass);
+        // The sun swells with bass — off-center, warm amber, with a cream core
+        // so it reads as the one light source / hero of the frame.
+        let sun_r = sh * (0.115 + 0.03 * feat.bass);
         let (sx, sy) = (sw * 0.62, horizon_y * 0.84);
-        draw_circle(sx, sy, sun_r, Color::new(AMBER.r, AMBER.g, AMBER.b, 0.9));
-        draw_circle(sx, sy, sun_r * 0.72, Color::new(AMBER_GLOW.r, AMBER_GLOW.g, AMBER_GLOW.b, 0.95));
+        draw_circle(sx, sy, sun_r, Color::new(AMBER.r, AMBER.g, AMBER.b, 0.92));
+        draw_circle(sx, sy, sun_r * 0.66, Color::new(AMBER_GLOW.r, AMBER_GLOW.g, AMBER_GLOW.b, 0.95));
+        draw_circle(sx, sy, sun_r * 0.34, Color::new(SPEC.r, SPEC.g, SPEC.b, 0.9));
         // Far skyline silhouettes = the spectrum.
         let n = feat.bands.len();
         let bw = sw / n as f32;
@@ -413,7 +415,8 @@ impl Mode for Surfer {
             let x = lane_edge / 2.0;
             let mut z = 4.0 - dash_phase;
             while z > -FAR {
-                box_outlined(vec3(x, 0.012, z - 0.45), vec3(0.09, 0.02, 0.9), Color::new(0.55, 0.57, 0.62, 1.0));
+                // Dimmed so the cream road lines don't compete with the sun.
+                box_outlined(vec3(x, 0.012, z - 0.45), vec3(0.09, 0.02, 0.9), Color::new(0.34, 0.36, 0.40, 1.0));
                 z -= 3.0;
             }
         }
@@ -421,7 +424,7 @@ impl Mode for Surfer {
             let mut z = 4.0;
             while z > -FAR {
                 let seg = vec3(side * ROAD_HALF, 0.012, z - 2.0);
-                draw_cube(seg, vec3(0.07, 0.02, 4.0), None, fog(Color::new(0.45, 0.47, 0.52, 1.0), -seg.z));
+                draw_cube(seg, vec3(0.07, 0.02, 4.0), None, fog(Color::new(0.28, 0.30, 0.34, 1.0), -seg.z));
                 z -= 4.0;
             }
         }
@@ -540,8 +543,10 @@ impl Mode for Surfer {
             if z > 2.0 || z < -FAR {
                 continue;
             }
-            let near = (1.0 - ((b.t - t).abs() / 0.18).min(1.0)) * 0.6;
-            let c = Color::new(0.72 + near * 0.28, 0.55 + near * 0.3, 0.30, 1.0);
+            // Barriers sit cool teal and only pulse warm on their exact beat, so
+            // the sun stays the single sustained warm hero.
+            let near = (1.0 - ((b.t - t).abs() / 0.18).min(1.0)).max(0.0);
+            let c = style::mix(Color::new(0.28, 0.40, 0.42, 1.0), AMBER, near * 0.7);
             for side in [-1.0f32, 1.0] {
                 box_outlined(vec3(b.x + side * 0.8, 0.42, z), vec3(0.13, 0.84, 0.13), c);
             }

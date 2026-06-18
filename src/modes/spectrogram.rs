@@ -11,7 +11,7 @@ use macroquad::prelude::*;
 
 use crate::analysis::N_BANDS;
 use crate::modes::{FrameCtx, Mode, Param};
-use crate::style::{self, hash01, mix, INK};
+use crate::style::{self, hash01};
 use crate::track::Track;
 use crate::view::{View, AH, AW};
 
@@ -27,12 +27,13 @@ impl Spectrogram {
     }
 }
 
-/// Intensity (0..1) -> heat, re-keyed to the palette: quiet recedes into ink,
-/// then teal, then amber, then cream at the hottest.
+/// Intensity (0..1) -> heat. Quiet bins go TRANSPARENT so the graded backdrop
+/// shows through as negative space (a bimodal panel, not a wall of teal); loud
+/// bins climb teal -> amber, and only true transients reach cream.
 fn heat(v: f32) -> Color {
-    let v = v.clamp(0.0, 1.0);
-    let floor = style::smoothstep(0.0, 0.12, v); // quiet bins fade to background
-    mix(INK, style::grade(v), floor)
+    let v = v.clamp(0.0, 0.94); // cap so it never floods to a full cream band
+    let presence = style::smoothstep(0.0, 0.30, v); // 0 quiet (clear) .. 1 loud
+    style::with_alpha(style::grade(v * v), presence) // v*v: only loud climbs out
 }
 
 impl Mode for Spectrogram {
@@ -66,8 +67,8 @@ impl Mode for Spectrogram {
     fn update(&mut self, ctx: &FrameCtx) {
         let mut col = [0.0f32; N_BANDS];
         for i in 0..N_BANDS {
-            // sqrt keeps quiet detail visible against the ink floor.
-            col[i] = (ctx.feat.bands[i] * self.gain).clamp(0.0, 1.0).sqrt();
+            // ^1.4 pushes quiet bins down toward the ink floor (bimodal panel).
+            col[i] = (ctx.feat.bands[i] * self.gain).clamp(0.0, 1.0).powf(1.4);
         }
         self.cols.push_back(col);
         while self.cols.len() > self.width {
@@ -77,17 +78,18 @@ impl Mode for Spectrogram {
 
     fn draw(&self, ctx: &FrameCtx) {
         let v = View::fit_world(AW, AH);
-        clear_background(INK);
+        style::backdrop(); // graded floor + key pool shows through the quiet bins
 
         let cw = AW / self.width as f32;
         let rh = AH / N_BANDS as f32;
-        let start_x = AW - self.cols.len() as f32 * cw; // right-aligned (newest at right)
         let n = self.cols.len();
+        let start_x = AW - n as f32 * cw; // right-aligned (newest at right)
         for (ci, col) in self.cols.iter().enumerate() {
             let x = start_x + ci as f32 * cw;
-            // ±2% column jitter + a hotter live edge break the mechanical grid.
             let jit = 0.98 + hash01(ci as i32 * 5 + 1) * 0.04;
-            let live = if ci + 1 == n { 1.18 } else { 1.0 };
+            // The newest handful of columns are the live hero edge — a touch
+            // hotter so the warm leading band reads.
+            let live = if (n - ci) as f32 <= 4.0 { 1.06 } else { 1.0 };
             for b in 0..N_BANDS {
                 let y_top = (b + 1) as f32 * rh;
                 v.rect(x, y_top, cw + 0.01, rh + 0.01, heat(col[b] * jit * live));

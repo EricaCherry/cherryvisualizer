@@ -127,10 +127,10 @@ pub fn finish(time: f32) {
         }
         let tiles = c.borrow();
         let tiles = tiles.as_ref().unwrap();
-        let idx = ((time * 26.0) as usize) % tiles.len();
+        let idx = ((time * 16.0) as usize) % tiles.len();
         tiles[idx].clone()
     });
-    draw_texture_ex(&grain, 0.0, 0.0, with_alpha(WHITE, 0.11), DrawTextureParams { dest_size: Some(vec2(w, h)), ..Default::default() });
+    draw_texture_ex(&grain, 0.0, 0.0, with_alpha(WHITE, 0.06), DrawTextureParams { dest_size: Some(vec2(w, h)), ..Default::default() });
 }
 
 fn build_backdrop() -> Texture2D {
@@ -160,10 +160,12 @@ fn build_vignette() -> Texture2D {
         for x in 0..n {
             let u = x as f32 / (n - 1) as f32;
             let v = y as f32 / (n - 1) as f32;
-            let dx = u - 0.52;
-            let dy = v - 0.50;
+            // Off-center to match the backdrop key light, so there's one
+            // coherent light direction and a protected bright center.
+            let dx = u - 0.46;
+            let dy = v - 0.42;
             let d = ((dx * dx + dy * dy).sqrt() / 0.72).min(1.0);
-            let a = smoothstep(0.34, 0.95, d) * 0.55;
+            let a = smoothstep(0.55, 1.0, d) * 0.62;
             // cool shadow generally; warm the lower corners to break symmetry
             let warm = smoothstep(0.6, 1.0, v) * smoothstep(0.5, 1.0, d);
             let tint = mix(SLATE, EMBER_SHADOW, warm * 0.6);
@@ -176,8 +178,9 @@ fn build_vignette() -> Texture2D {
 }
 
 fn build_grain() -> Vec<Texture2D> {
-    // 16:9 tiles so a fullscreen blit is ~2px texels with no stretch distortion.
-    let (w, h) = (768u16, 432u16);
+    // 16:9 tiles at near-frame resolution so a fullscreen blit is ~1px grain.
+    // Built straight as RGBA bytes (from_rgba8) — far faster than set_pixel.
+    let (w, h) = (1280usize, 720usize);
     let mut seed = 0x1234_5678u32;
     let mut rng = move || {
         seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
@@ -185,18 +188,21 @@ fn build_grain() -> Vec<Texture2D> {
     };
     let mut tiles = Vec::with_capacity(GRAIN_TILES);
     for _ in 0..GRAIN_TILES {
-        let mut img = Image::gen_image_color(w, h, Color::new(0.0, 0.0, 0.0, 0.0));
-        for y in 0..h {
-            for x in 0..w {
-                let r = rng();
-                // bipolar grain: bright cream + dark ink specks, cubed so all but
-                // the rare extremes are nearly invisible (a true whisper).
-                let d = (r - 0.5).abs() * 2.0;
-                let col = if r > 0.5 { SPEC } else { INK };
-                img.set_pixel(x as u32, y as u32, Color::new(col.r, col.g, col.b, d * d * d));
-            }
+        let mut bytes = vec![0u8; w * h * 4];
+        for p in 0..w * h {
+            let r = rng();
+            // bipolar grain: bright cream + (weaker) dark ink specks, cubed so all
+            // but the rare extremes are invisible and true blacks stay clean.
+            let d = (r - 0.5).abs() * 2.0;
+            let (col, k) = if r > 0.5 { (SPEC, 1.0) } else { (INK, 0.5) };
+            let a = d * d * d * k;
+            let o = p * 4;
+            bytes[o] = (col.r * 255.0) as u8;
+            bytes[o + 1] = (col.g * 255.0) as u8;
+            bytes[o + 2] = (col.b * 255.0) as u8;
+            bytes[o + 3] = (a * 255.0) as u8;
         }
-        let tex = Texture2D::from_image(&img);
+        let tex = Texture2D::from_rgba8(w as u16, h as u16, &bytes);
         tex.set_filter(FilterMode::Nearest);
         tiles.push(tex);
     }
