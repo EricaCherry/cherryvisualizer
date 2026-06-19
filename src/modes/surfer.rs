@@ -619,10 +619,10 @@ impl Mode for Surfer {
         box_outlined(vec3(px + lean * 0.10, base + 0.74, 0.0), vec3(0.46, 0.58, 0.30), PLAYER_BODY);
         box_outlined(vec3(px + lean * 0.22, base + 1.20, 0.0), vec3(0.27, 0.27, 0.27), PLAYER_SKIN);
 
-        // Filmic finish (vignette + grain) over the composited 3D frame, drawn
-        // in 2D into the same target so play and export match the other modes.
+        // Vignette over the composited 3D frame, drawn in 2D into the same
+        // target so play and export match the other modes.
         view::apply_screen_camera();
-        style::finish(t);
+        style::finish();
         set_default_camera();
     }
 }

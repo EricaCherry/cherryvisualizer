@@ -2,7 +2,7 @@
 //!
 //! Color is mapped to ENERGY (never to element index, the rainbow-HSL tell):
 //! quiet sits in a cool body family, loud lights up one warm hero, over a graded
-//! filmic ground with a restrained vignette + grain finish. The eight *roles*
+//! filmic ground with a restrained vignette finish. The eight *roles*
 //! are fixed; their *colors* come from the active [`Theme`], so switching theme
 //! re-skins the whole app. Modes read roles through the accessor fns
 //! ([`ink`], [`teal`], [`amber`], …) and pull energy color from [`grade`].
@@ -187,15 +187,11 @@ pub fn glow_core(v: &View, x: f32, y: f32, r: f32, accent: Color) {
 thread_local! {
     static BACKDROP: RefCell<Option<Texture2D>> = const { RefCell::new(None) };
     static VIGNETTE: RefCell<Option<Texture2D>> = const { RefCell::new(None) };
-    static GRAIN: RefCell<Option<Vec<Texture2D>>> = const { RefCell::new(None) };
 }
-
-const GRAIN_TILES: usize = 4;
 
 fn invalidate_baked() {
     BACKDROP.with(|c| *c.borrow_mut() = None);
     VIGNETTE.with(|c| *c.borrow_mut() = None);
-    GRAIN.with(|c| *c.borrow_mut() = None);
 }
 
 /// The graded background: an ink->slate vertical gradient with a faint
@@ -224,12 +220,10 @@ pub fn backdrop_blend(alpha: f32) {
     draw_texture_ex(&tex, 0.0, 0.0, with_alpha(WHITE, alpha), DrawTextureParams { dest_size: Some(vec2(w, h)), ..Default::default() });
 }
 
-/// The shared filmic finish: a soft vignette then fine animated grain. Called
-/// last in every mode's `draw`, so play and export share one look. `time` drives
-/// the grain so it shimmers (and stays deterministic for exports).
-pub fn finish(time: f32) {
+/// The shared finish: just a soft vignette to frame the dark. Called last in the
+/// pipeline, so play and export share one look. (No grain.)
+pub fn finish() {
     let (w, h) = (view::screen_w(), view::screen_h());
-
     let vig = VIGNETTE.with(|c| {
         if c.borrow().is_none() {
             *c.borrow_mut() = Some(build_vignette());
@@ -237,17 +231,6 @@ pub fn finish(time: f32) {
         c.borrow().as_ref().unwrap().clone()
     });
     draw_texture_ex(&vig, 0.0, 0.0, WHITE, DrawTextureParams { dest_size: Some(vec2(w, h)), ..Default::default() });
-
-    let grain = GRAIN.with(|c| {
-        if c.borrow().is_none() {
-            *c.borrow_mut() = Some(build_grain());
-        }
-        let tiles = c.borrow();
-        let tiles = tiles.as_ref().unwrap();
-        let idx = ((time * 16.0) as usize) % tiles.len();
-        tiles[idx].clone()
-    });
-    draw_texture_ex(&grain, 0.0, 0.0, with_alpha(WHITE, 0.06), DrawTextureParams { dest_size: Some(vec2(w, h)), ..Default::default() });
 }
 
 fn build_backdrop() -> Texture2D {
@@ -296,35 +279,3 @@ fn build_vignette() -> Texture2D {
     tex
 }
 
-fn build_grain() -> Vec<Texture2D> {
-    // 16:9 tiles at near-frame resolution so a fullscreen blit is ~1px grain.
-    // Built straight as RGBA bytes (from_rgba8) — far faster than set_pixel.
-    let p = active();
-    let (w, h) = (1280usize, 720usize);
-    let mut seed = 0x1234_5678u32;
-    let mut rng = move || {
-        seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
-        (seed >> 8) as f32 / 16_777_216.0
-    };
-    let mut tiles = Vec::with_capacity(GRAIN_TILES);
-    for _ in 0..GRAIN_TILES {
-        let mut bytes = vec![0u8; w * h * 4];
-        for px in 0..w * h {
-            let r = rng();
-            // bipolar grain: bright cream + (weaker) dark ink specks, cubed so all
-            // but the rare extremes are invisible and true blacks stay clean.
-            let d = (r - 0.5).abs() * 2.0;
-            let (col, k) = if r > 0.5 { (p.spec, 1.0) } else { (p.ink, 0.5) };
-            let a = d * d * d * k;
-            let o = px * 4;
-            bytes[o] = (col.r * 255.0) as u8;
-            bytes[o + 1] = (col.g * 255.0) as u8;
-            bytes[o + 2] = (col.b * 255.0) as u8;
-            bytes[o + 3] = (a * 255.0) as u8;
-        }
-        let tex = Texture2D::from_rgba8(w as u16, h as u16, &bytes);
-        tex.set_filter(FilterMode::Nearest);
-        tiles.push(tex);
-    }
-    tiles
-}

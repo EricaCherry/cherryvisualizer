@@ -5,7 +5,7 @@
 //! The heat ramp is the shared energy grade re-keyed so quiet bins recede into
 //! the ink floor and only loud bins climb to amber and cream — no blue->red
 //! rainbow. It opts out of the persistence trails (it IS the time axis) but
-//! still takes the shared vignette + grain so it matches the family.
+//! still takes the shared vignette so it matches the family.
 
 use macroquad::prelude::*;
 

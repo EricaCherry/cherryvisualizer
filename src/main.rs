@@ -268,6 +268,17 @@ fn fmt_time(s: f32) -> String {
     format!("{}:{:02}", (s / 60.0) as u32, (s % 60.0) as u32)
 }
 
+/// Force full alpha on a captured frame before saving a PNG. The feedback
+/// composite leaves the frame's alpha < 1 (harmless on screen and in the MP4,
+/// which ignore alpha) but it reads as washed-out when a PNG is viewed over
+/// white. Saved screenshots should be opaque.
+fn opaque(mut img: Image) -> Image {
+    for px in img.bytes.chunks_mut(4) {
+        px[3] = 255;
+    }
+    img
+}
+
 #[macroquad::main(window_conf)]
 async fn main() {
     let args = parse_args();
@@ -676,7 +687,7 @@ async fn main() {
                 } else {
                     format!("shot-{}.png", modes[sel].name().to_lowercase().replace(' ', "-"))
                 };
-                get_screen_data().export_png(&name);
+                opaque(get_screen_data()).export_png(&name);
                 println!("wrote {name}");
                 std::process::exit(0);
             }

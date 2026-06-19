@@ -3,8 +3,8 @@
 //! A persistent buffer accumulates the frame. At the start of each frame it is
 //! decayed toward the backdrop (old content fades), then the mode's fresh
 //! content is drawn on top — so motion leaves echoes. The buffer is composited
-//! to the screen (live) or the export target, with the vignette + grain finish
-//! applied LAST so it never accumulates.
+//! to the screen (live) or the export target, with the vignette finish applied
+//! LAST so it never accumulates.
 //!
 //! Shader-free: the decay is a backdrop blit at low alpha and the trails are
 //! ordinary alpha-blended draws, so it runs the same in play and export.
@@ -58,12 +58,15 @@ impl PostFx {
         }
         mode.draw(ctx); // content only — its backdrop/finish are the pipeline's job
 
-        // ---- composite the buffer to the destination + filmic finish -------
+        // ---- composite the buffer to the destination + vignette ------------
         match dest {
             Some(rt) => view::set_export_target(Some(rt.clone())),
             None => view::set_export_target(None),
         }
         view::apply_screen_camera();
+        // Clear the destination first so the (partly-transparent) feedback blit
+        // settles over a solid floor rather than accumulating across frames.
+        clear_background(style::ink());
         // Render-target textures sample bottom-up, so flip back to upright here.
         draw_texture_ex(
             &self.fb.texture,
@@ -72,7 +75,7 @@ impl PostFx {
             WHITE,
             DrawTextureParams { dest_size: Some(vec2(wf, hf)), flip_y: true, ..Default::default() },
         );
-        style::finish(ctx.time);
+        style::finish();
 
         set_default_camera();
         view::set_export_target(None);

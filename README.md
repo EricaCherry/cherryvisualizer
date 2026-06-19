@@ -20,9 +20,9 @@ no install, no server. One double-clickable executable, written in Rust.
 Every mode shares one art direction — *Dusk Encom*: a deep, slightly-cool
 near-black holds most of the frame; color is mapped to **energy, not index**
 (quiet sits in a calm teal family, loud lights up a single warm amber hero), and
-the whole frame is finished with a graded backdrop, a soft vignette, and fine
-film grain. No rainbow ramps, no neon — it's graded like one photographed frame,
-not six screensavers.
+the whole frame is finished with a graded backdrop and a soft vignette. No
+rainbow ramps, no neon — it's graded like one photographed frame, not six
+screensavers.
 
 Motion comes from a **feedback buffer**: each frame decays toward the backdrop
 before the new frame is drawn, so moving elements leave echo trails — the ball
@@ -132,7 +132,7 @@ src/
   view.rs          world space -> letterboxed viewport + the offscreen-render
                    plumbing the exporter uses
   style.rs         the shared art direction: themes/palette, energy->color
-                   grade, graded backdrop, vignette + film-grain finish
+                   grade, graded backdrop, vignette finish
   postfx.rs        the "alive" feedback pipeline (decaying echo trails)
   export.rs        offscreen render -> raw frames -> ffmpeg -> MP4 (+ audio mux)
   modes/

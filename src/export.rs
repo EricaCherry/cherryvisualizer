@@ -240,7 +240,13 @@ pub fn render_preview(settings: ExportSettings, mut mode: Box<dyn Mode>, track: 
             postfx.render(mode.as_ref(), &ctx, Some(&rt));
         }
     }
-    rt.texture.get_texture_data()
+    // The feedback composite leaves alpha < 1; force opaque so the saved PNG
+    // isn't washed out when viewed over white.
+    let mut img = rt.texture.get_texture_data();
+    for px in img.bytes.chunks_mut(4) {
+        px[3] = 255;
+    }
+    img
 }
 
 fn spawn_ffmpeg(s: &ExportSettings, audio: &Path, out: &Path, log: &Path) -> Result<Child, String> {
