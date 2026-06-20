@@ -45,7 +45,7 @@ a cool hero). Pick one in **Settings → Theme**, or `--theme <0-5>` on the CLI.
 
 ## The modes
 
-Six so far, mixing the flagship "the audio plays the game" modes with the
+Seven so far, mixing the flagship "the audio plays the game" modes with the
 classic music-visualizer staples:
 
 **Waveform Breakout** — breakout with no player and no paddle sprite: **the live
@@ -85,6 +85,16 @@ outlines — no textures, no shaders. Mechanics referenced from MIT-licensed
 open-source runners ([NovemberDev's Godot endless runner](https://github.com/NovemberDev/novemberdev-godot-endless-runner-tutorial),
 [joaokucera's Unity endless runner](https://github.com/joaokucera/unity-endless-runner))
 and jump timing from [Chromium's T-Rex runner](https://source.chromium.org/chromium/chromium/src/+/main:components/neterror/resources/dino_game/) (BSD).
+
+**Rail Shooter** — a StarFox-style on-rails space flight the music flies. Same
+offline-distance trick as Beat Surfer, with one new mechanic: **laser lead** —
+the Arwing's twin bolts fire *early*, by their exact travel time, so the tracer
+strikes the enemy on the beat and it bursts into debris. Strong beats stream
+fighter formations, an even cadence flows checkpoint rings, bass breathes the
+canyon walls, mid runs throw asteroid scenery, and the rarest hits snap a full
+barrel roll. The corridor is surfaced with **procedurally generated**
+`.kkrieger`-style sci-fi panels (grid, seams, rivets — baked neutral and tinted
+by the theme, so zero assets and it re-skins with the palette).
 
 ## Run it
 
