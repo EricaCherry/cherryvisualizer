@@ -93,6 +93,9 @@ pub struct Breakout {
     _force_recv: Receiver<ContactForceEvent>,
     events: ChannelEventCollector,
 
+    /// A longer audio window (~140ms) the paddle reads, so its smoothed curve
+    /// shows real bass-shaped amplitude instead of a flat 46ms snapshot.
+    paddle_buf: Vec<f32>,
     /// Per-point paddle height, temporally smoothed (what is drawn + collided).
     paddle_y: Vec<f32>,
     paddle_world: Vec<(f32, f32)>,
@@ -182,6 +185,7 @@ impl Breakout {
             col_recv,
             _force_recv,
             events,
+            paddle_buf: vec![0.0; 6144],
             paddle_y: vec![PADDLE_BASE_Y; WAVE_PTS],
             paddle_world: vec![(0.0, PADDLE_BASE_Y); WAVE_PTS],
             trail: VecDeque::new(),
@@ -278,25 +282,41 @@ impl Breakout {
     /// Amplitude pulses with loudness.
     /// Returns the largest point movement this frame, so the caller can skip
     /// rebuilding the collider when the surface is effectively still.
-    fn reshape_paddle(&mut self, wave: &[f32], rms: f32, dt: f32) -> f32 {
-        let n = wave.len().max(1);
-        // Normalize by the window's own peak so the paddle shows real shape at
-        // ANY track level (real audio is far quieter than the synthetic demo).
-        let peak = wave.iter().fold(0.0f32, |m, &x| m.max(x.abs())).max(0.05);
-        let amp = self.paddle_amp * (0.4 + rms * 1.0) * 0.55 / peak; // pulses with loudness
-        let st = (dt * 11.0).min(1.0); // responsive enough to keep shape
+    fn reshape_paddle(&mut self, rms: f32, dt: f32) -> f32 {
+        let n = self.paddle_buf.len();
+        // 1) Downsample the ~140ms window to control points, averaging over a WIDE
+        //    span (a strong low-pass) so only the smooth bass-shaped curve remains.
+        let mut pts = [0.0f32; WAVE_PTS];
+        let span = (n / WAVE_PTS * 2).max(1);
+        for i in 0..WAVE_PTS {
+            let center = (i as f32 / (WAVE_PTS - 1) as f32 * (n - 1) as f32) as usize;
+            let lo = center.saturating_sub(span);
+            let hi = (center + span).min(n - 1);
+            let mut s = 0.0;
+            for k in lo..=hi {
+                s += self.paddle_buf[k];
+            }
+            pts[i] = s / (hi - lo + 1) as f32;
+        }
+        // 2) A few [1,2,1] passes round it into a flowing curve.
+        for _ in 0..3 {
+            let src = pts;
+            for i in 1..WAVE_PTS - 1 {
+                pts[i] = src[i - 1] * 0.25 + src[i] * 0.5 + src[i + 1] * 0.25;
+            }
+        }
+        // 3) Normalize, then scale up BOLD (loudness-pulsed) around a raised base
+        //    so the full bipolar swing reads, and ease over time so it flows.
+        // Normalize by the curve's RMS (not its peak) so the TYPICAL swing fills
+        // the amplitude — a peaky curve would otherwise read as mostly flat.
+        let rms_pts = (pts.iter().map(|x| x * x).sum::<f32>() / WAVE_PTS as f32).sqrt().max(0.004);
+        let amp = self.paddle_amp * (0.55 + rms * 0.6) / rms_pts;
+        let base = PADDLE_BASE_Y + 0.85;
+        let st = (dt * 7.0).min(1.0);
         let mut moved = 0.0f32;
         for i in 0..WAVE_PTS {
             let f = i as f32 / (WAVE_PTS - 1) as f32;
-            let center = (f * (n - 1) as f32) as usize;
-            let lo = center.saturating_sub(3);
-            let hi = (center + 3).min(n - 1);
-            let mut s = 0.0;
-            for k in lo..=hi {
-                s += wave[k];
-            }
-            let sample = s / (hi - lo + 1) as f32;
-            let target = (PADDLE_BASE_Y + sample * amp).max(PADDLE_FLOOR);
+            let target = (base + pts[i] * amp).max(PADDLE_FLOOR);
             let delta = (target - self.paddle_y[i]) * st;
             self.paddle_y[i] += delta;
             moved = moved.max(delta.abs());
@@ -394,7 +414,8 @@ impl Mode for Breakout {
         // 1) Smoothed, pulsing waveform paddle. Rebuilding the polyline collider
         //    rebuilds its whole BVH (the bulk of update()), so only do it when
         //    the surface actually moved enough to change a bounce.
-        let moved = self.reshape_paddle(ctx.wave, feat.rms, dt);
+        ctx.track.window_at(ctx.time, &mut self.paddle_buf);
+        let moved = self.reshape_paddle(feat.rms, dt);
         if moved > 0.005 {
             let verts: Vec<Vector> = self.paddle_world.iter().map(|&(x, y)| Vector::new(x, y)).collect();
             if let Some(c) = self.colliders.get_mut(self.paddle) {
@@ -543,18 +564,20 @@ impl Mode for Breakout {
         // under-band. Flash/beat tints it warm. No stacked glow.
         let flash = self.paddle_flash;
         let crest = mix(teal(), amber(), (flash * 0.7).min(0.7));
-        let band = with_alpha(teal(), 0.07 + flash * 0.04);
+        let band = with_alpha(teal(), 0.13 + flash * 0.05);
         for i in 1..self.paddle_world.len() {
             let (x0, y0) = self.paddle_world[i - 1];
             let (x1, y1) = self.paddle_world[i];
             let a = v.xy(x0, y0);
             let b = v.xy(x1, y1);
-            let cc = v.xy(x1, (y1 - 0.55).max(0.0));
-            let dd = v.xy(x0, (y0 - 0.55).max(0.0));
+            // Fill the whole body from the crest down to the floor — a bold,
+            // solid waveform rather than a thin line.
+            let cc = v.xy(x1, 0.0);
+            let dd = v.xy(x0, 0.0);
             draw_triangle(a.into(), b.into(), cc.into(), band);
             draw_triangle(a.into(), cc.into(), dd.into(), band);
-            v.line(x0, y0 - 0.04, x1, y1 - 0.04, 2.0, with_alpha(slate(), 0.85));
-            v.line(x0, y0, x1, y1, 2.5 + flash * 1.2, crest);
+            v.line(x0, y0 - 0.04, x1, y1 - 0.04, 2.5, with_alpha(slate(), 0.85));
+            v.line(x0, y0, x1, y1, 4.0 + flash * 1.5, crest);
         }
 
         // Ball: the single hero.

@@ -31,14 +31,22 @@ impl Scope {
     fn sample(wave: &[f32]) -> Vec<f32> {
         let n = wave.len().max(1);
         // Normalize by the window peak so the trace shows shape at any track level.
-        let norm = 0.7 / wave.iter().fold(0.0f32, |m, &x| m.max(x.abs())).max(0.05);
-        (0..NPTS)
+        let norm = 0.78 / wave.iter().fold(0.0f32, |m, &x| m.max(x.abs())).max(0.05);
+        let mut v: Vec<f32> = (0..NPTS)
             .map(|i| {
                 let f = i as f32 / (NPTS - 1) as f32;
                 let idx = ((f * (n - 1) as f32) as usize).min(n - 1);
                 wave[idx] * norm
             })
-            .collect()
+            .collect();
+        // A couple of [1,2,1] passes take the jagged edge off the trace.
+        for _ in 0..2 {
+            let src = v.clone();
+            for i in 1..NPTS - 1 {
+                v[i] = src[i - 1] * 0.25 + src[i] * 0.5 + src[i + 1] * 0.25;
+            }
+        }
+        v
     }
 }
 
