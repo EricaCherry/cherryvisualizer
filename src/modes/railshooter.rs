@@ -16,7 +16,7 @@
 
 use macroquad::prelude::*;
 
-use crate::modes::{FrameCtx, Mode, Param};
+use crate::modes::{Category, FrameCtx, Mode, Param};
 use crate::style::{self, amber, amber_glow, hash01, ink, mix, slate, spec, teal, teal_deep, with_alpha};
 use crate::track::Track;
 use crate::view;
@@ -229,6 +229,10 @@ impl Mode for RailShooter {
 
     fn about(&self) -> &'static str {
         "A StarFox-style rails shooter the music flies: beats fire the lasers and stream the enemies."
+    }
+
+    fn category(&self) -> Category {
+        Category::Game
     }
 
     fn own_background(&self) -> bool {

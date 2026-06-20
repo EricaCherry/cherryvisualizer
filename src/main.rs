@@ -29,13 +29,15 @@ use analysis::{features_at, Analyser, FFT_LEN};
 use audio::AudioEngine;
 use export::{ExportSettings, Exporter};
 use modes::breakout::Breakout;
+use modes::radial::Radial;
 use modes::railshooter::RailShooter;
 use modes::scope::Scope;
 use modes::spectrogram::Spectrogram;
 use modes::spectrum::Spectrum;
 use modes::starfield::Starfield;
 use modes::surfer::Surfer;
-use modes::{FrameCtx, Mode, Param, ParamKind};
+use modes::tunnel::Tunnel;
+use modes::{Category, FrameCtx, Mode, Param, ParamKind};
 use postfx::PostFx;
 use track::Track;
 
@@ -44,12 +46,14 @@ const SHOT_FRAMES: u32 = 180;
 /// The mode registry — the single source of truth for the picker, the factory,
 /// and `MODE_COUNT`. Add a mode here (plus its `mod` line) and it appears
 /// everywhere; nothing else to keep in sync.
-const MODES: [fn() -> Box<dyn Mode>; 7] = [
+const MODES: [fn() -> Box<dyn Mode>; 9] = [
     || Box::new(Breakout::new()),
     || Box::new(Spectrum::new()),
     || Box::new(Scope::new()),
     || Box::new(Spectrogram::new()),
     || Box::new(Starfield::new()),
+    || Box::new(Tunnel::new()),
+    || Box::new(Radial::new()),
     || Box::new(Surfer::new()),
     || Box::new(RailShooter::new()),
 ];
@@ -242,7 +246,7 @@ struct UiData {
     paused: bool,
     volume: f32,
     fps: i32,
-    modes: Vec<(&'static str, &'static str)>,
+    modes: Vec<(&'static str, &'static str, Category)>,
     sel: usize,
     params: Vec<Param>,
     themes: Vec<&'static str>,
@@ -533,7 +537,7 @@ async fn main() {
                 paused: audio.is_paused(),
                 volume: audio.volume(),
                 fps: (1.0 / dt.max(1e-4)) as i32,
-                modes: modes.iter().map(|m| (m.name(), m.about())).collect(),
+                modes: modes.iter().map(|m| (m.name(), m.about(), m.category())).collect(),
                 sel,
                 params: modes[sel].params(),
                 themes: style::theme_names(),
@@ -904,18 +908,26 @@ fn build_ui(ctx: &egui::Context, data: &UiData, ui: &mut UiState, actions: &mut 
 
 fn tab_modes(ui: &mut egui::Ui, data: &UiData, actions: &mut Vec<Action>) {
     ui.add_space(4.0);
-    for (i, (name, about)) in data.modes.iter().enumerate() {
-        let selected = i == data.sel;
-        let resp = ui.add(
-            egui::Button::new(egui::RichText::new(*name).strong())
-                .min_size(egui::vec2(ui.available_width(), 0.0))
-                .selected(selected),
-        );
-        if resp.clicked() {
-            actions.push(Action::SelectMode(i));
+    for (cat, title) in [(Category::Visualizer, "Visualizers"), (Category::Game, "Games")] {
+        ui.label(egui::RichText::new(title).strong());
+        ui.add_space(2.0);
+        for (i, (name, about, c)) in data.modes.iter().enumerate() {
+            if *c != cat {
+                continue;
+            }
+            let resp = ui.add(
+                egui::Button::new(egui::RichText::new(*name).strong())
+                    .min_size(egui::vec2(ui.available_width(), 0.0))
+                    .selected(i == data.sel),
+            );
+            if resp.clicked() {
+                actions.push(Action::SelectMode(i));
+            }
+            ui.label(egui::RichText::new(*about).weak().small());
+            ui.add_space(8.0);
         }
-        ui.label(egui::RichText::new(*about).weak().small());
-        ui.add_space(8.0);
+        ui.add_space(4.0);
+        ui.separator();
     }
 }
 

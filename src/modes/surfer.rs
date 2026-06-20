@@ -24,7 +24,7 @@
 
 use macroquad::prelude::*;
 
-use crate::modes::{FrameCtx, Mode};
+use crate::modes::{Category, FrameCtx, Mode};
 use crate::style::{self, amber, amber_glow, hash01, spec, teal};
 use crate::track::Track;
 use crate::view;
@@ -193,6 +193,10 @@ impl Mode for Surfer {
 
     fn about(&self) -> &'static str {
         "A 3D lane runner the music plays: beats become trains, jumps, and coin trails."
+    }
+
+    fn category(&self) -> Category {
+        Category::Game
     }
 
     // Surfer paints its own sky and finish (3D + fog carry the motion; feedback

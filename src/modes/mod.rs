@@ -6,12 +6,14 @@
 //! here + one line in `main.rs`.
 
 pub mod breakout;
+pub mod radial;
 pub mod railshooter;
 pub mod scope;
 pub mod spectrogram;
 pub mod spectrum;
 pub mod starfield;
 pub mod surfer;
+pub mod tunnel;
 
 use crate::analysis::Features;
 use crate::track::Track;
@@ -32,11 +34,22 @@ pub struct FrameCtx<'a> {
     pub dt: f32,
 }
 
+/// Which group a mode shows under in the picker.
+#[derive(Clone, Copy, PartialEq)]
+pub enum Category {
+    Visualizer,
+    Game,
+}
+
 pub trait Mode {
     fn name(&self) -> &'static str;
     /// One-line description shown in the mode picker.
     fn about(&self) -> &'static str {
         ""
+    }
+    /// Which section of the Modes tab this appears under (default Visualizer).
+    fn category(&self) -> Category {
+        Category::Visualizer
     }
     /// Called when a (new) track starts: precompute anything track-dependent.
     fn reset(&mut self, track: &Track);

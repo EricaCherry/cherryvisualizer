@@ -17,7 +17,7 @@ use std::collections::VecDeque;
 use std::sync::mpsc::{channel, Receiver};
 
 use crate::analysis::N_BANDS;
-use crate::modes::{FrameCtx, Mode, Param};
+use crate::modes::{Category, FrameCtx, Mode, Param};
 use crate::style::{self, amber, hash01, mix, slate, spec, teal, teal_deep, with_alpha};
 use crate::track::Track;
 use crate::view::{View, AH, AW};
@@ -310,6 +310,10 @@ impl Mode for Breakout {
 
     fn about(&self) -> &'static str {
         "Breakout with no player — the waveform is the paddle. The spectrum builds the wall."
+    }
+
+    fn category(&self) -> Category {
+        Category::Game
     }
 
     fn trail(&self) -> f32 {
