@@ -34,10 +34,14 @@ trails would smear the time axis or the depth.)
 
 That art direction is **theme-driven**: the eight palette *roles* are fixed, but
 their colors come from the active theme, so one switch re-skins every mode (and
-its exports). Cherry ships six, mapped from artistic palettes on
-[Lospec](https://lospec.com/palette-list) — *Dusk Encom* (teal/amber), *Sunset*
-(SLSO8 blue→peach), *Nyx*, *Oil Dream*, *Forest*, and *Ember* (a warm world with
-a cool hero). Pick one in **Settings → Theme**, or `--theme <0-5>` on the CLI.
+its exports). It ships the house *Dusk Encom* plus **25 curated palettes from
+[Lospec](https://lospec.com/palette-list)** (Oil 6, Ice Cream GB, FunkyFuture 8,
+PICO-8, Sweetie 16, Apollo, …). A palette can have **any color count** — a
+`from_colors` mapping folds a 3/4/5/6/8…46-color set onto the eight roles
+(forcing a deep dark ground, a cool body, a warm hero) so even a tiny Game Boy
+palette yields a full, dark-room-ready theme. There's also a live **Custom**
+theme: pick Background / Body / Hero / Highlight with color pickers in
+**Settings → Theme**, and the rest is derived. (`--theme <n>` on the CLI.)
 
 | Sunset | Ember |
 |---|---|
@@ -45,7 +49,7 @@ a cool hero). Pick one in **Settings → Theme**, or `--theme <0-5>` on the CLI.
 
 ## The modes
 
-Seven so far, mixing the flagship "the audio plays the game" modes with the
+Nine so far, mixing the flagship "the audio plays the game" modes with the
 classic music-visualizer staples:
 
 **Waveform Breakout** — breakout with no player and no paddle sprite: **the live
@@ -69,6 +73,12 @@ amber and cream. Newest column at the right.
 **Starfield** — the demoscene/screensaver warp-stars, flown by the music:
 loudness sets the speed and every beat punches the field into hyperspace. Far
 stars are dim teal, near ones warm to amber, the closest tip to cream.
+
+**Tunnel** — demoscene concentric rings rushing an off-center vanishing point,
+twisting on the treble and punching into warp on the beat, with a glowing eye.
+
+**Polar Spectrum** — the 32-band spectrum wrapped into a mirrored, slowly
+rotating ring: quiet bands hug the rim in teal, the loudest shoots out as amber.
 
 **Beat Surfer** — a 3D lane runner (think Subway Surfers), played entirely by
 the music. Cherry pre-analyzes the whole track at load and turns the beat grid
