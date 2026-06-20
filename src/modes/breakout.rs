@@ -280,7 +280,10 @@ impl Breakout {
     /// rebuilding the collider when the surface is effectively still.
     fn reshape_paddle(&mut self, wave: &[f32], rms: f32, dt: f32) -> f32 {
         let n = wave.len().max(1);
-        let amp = self.paddle_amp * (0.55 + rms * 1.6); // pulses with loudness
+        // Normalize by the window's own peak so the paddle shows real shape at
+        // ANY track level (real audio is far quieter than the synthetic demo).
+        let peak = wave.iter().fold(0.0f32, |m, &x| m.max(x.abs())).max(0.05);
+        let amp = self.paddle_amp * (0.4 + rms * 1.0) * 0.55 / peak; // pulses with loudness
         let st = (dt * 11.0).min(1.0); // responsive enough to keep shape
         let mut moved = 0.0f32;
         for i in 0..WAVE_PTS {

@@ -84,6 +84,10 @@ impl Profile {
         }
 
         // Beats: bass energy spikes over a ~1s trailing average, 220ms apart min.
+        // The absolute floor is RELATIVE to this track's own bass level (not a
+        // fixed number tuned to one demo), so beats are found in any real track.
+        let low_mean = low.iter().sum::<f32>() / low.len().max(1) as f32;
+        let floor = (low_mean * 0.45).max(0.002);
         let mut beats = Vec::new();
         let mut hist_sum = 0.0f32;
         let mut hist = std::collections::VecDeque::new();
@@ -91,7 +95,7 @@ impl Profile {
         for (h, &e) in low.iter().enumerate() {
             let t = h as f32 * hop_dt;
             let avg = if hist.is_empty() { e } else { hist_sum / hist.len() as f32 };
-            if e > avg * 1.35 && e > 0.015 && (last_beat < 0.0 || t - last_beat > 0.22) {
+            if e > avg * 1.35 && e > floor && (last_beat < 0.0 || t - last_beat > 0.22) {
                 beats.push(Beat { t, strength: (e / avg.max(1e-6)).min(4.0) });
                 last_beat = t;
             }

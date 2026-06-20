@@ -56,6 +56,10 @@ pub struct Analyser {
     scratch: Vec<Complex<f32>>,
     fft_len: usize,
     smoothed: [f32; N_BANDS],
+    /// Adaptive references (running peaks) for auto-gain, so the visuals respond
+    /// to ANY track's level, not just the synthetic demo they were tuned to.
+    band_ref: f32,
+    loud_ref: f32,
 }
 
 impl Analyser {
@@ -70,7 +74,7 @@ impl Analyser {
                 0.5 * (1.0 - (2.0 * std::f32::consts::PI * i as f32 / (fft_len - 1) as f32).cos())
             })
             .collect();
-        Analyser { fft, hann, input, spectrum, scratch, fft_len, smoothed: [0.0; N_BANDS] }
+        Analyser { fft, hann, input, spectrum, scratch, fft_len, smoothed: [0.0; N_BANDS], band_ref: 0.01, loud_ref: 0.05 }
     }
 
     /// Analyze one window. `dt` drives the visual release-smoothing of bands.
@@ -81,7 +85,13 @@ impl Analyser {
         for &s in &samples[..n] {
             sum_sq += s * s;
         }
-        let rms = (sum_sq / n.max(1) as f32).sqrt().min(1.0);
+        let raw_rms = (sum_sq / n.max(1) as f32).sqrt();
+
+        // Adaptive loudness: auto-level to the recent peak (a running peak with a
+        // ~2s release + floor) so quiet and loud tracks both use the full range.
+        let rel = (-dt / 2.0).exp();
+        self.loud_ref = raw_rms.max(self.loud_ref * rel).max(0.008);
+        let rms = (raw_rms * 0.72 / self.loud_ref).min(1.0);
 
         for i in 0..self.fft_len {
             let s = if i < n { samples[i] } else { 0.0 };
@@ -95,14 +105,13 @@ impl Analyser {
         let sr = sample_rate as f32;
         let bin_hz = sr / self.fft_len as f32;
         let to_bin = |hz: f32| ((hz / bin_hz).round() as usize).clamp(1, n_bins - 1);
-        let gain = 6.0f32;
 
-        // 32 log-spaced bands (peak magnitude per band), attack-fast / release-slow.
+        // 32 log-spaced bands (raw peak magnitude per band).
         let f_min = 30.0f32;
         let f_max = (sr / 2.0).min(16_000.0);
         let (lmin, lmax) = (f_min.log2(), f_max.log2());
-        let release = (-dt * 4.5).exp();
-        let mut bands = [0.0f32; N_BANDS];
+        let mut raw = [0.0f32; N_BANDS];
+        let mut frame_max = 0.0f32;
         for b in 0..N_BANDS {
             let lo = 2f32.powf(lmin + (b as f32 / N_BANDS as f32) * (lmax - lmin));
             let hi = 2f32.powf(lmin + ((b + 1) as f32 / N_BANDS as f32) * (lmax - lmin));
@@ -111,30 +120,44 @@ impl Analyser {
             for k in lob..=hib.min(n_bins - 1) {
                 peak = peak.max(self.spectrum[k].norm());
             }
-            let raw = (peak * 2.0 / self.fft_len as f32 * gain).min(1.0);
-            self.smoothed[b] = raw.max(self.smoothed[b] * release);
+            raw[b] = peak * 2.0 / self.fft_len as f32;
+            frame_max = frame_max.max(raw[b]);
+        }
+
+        // Adaptive band gain: map the recent-loudest band to ~0.9, then a sqrt
+        // curve lifts the lower levels so real (broadband) music fills the range.
+        self.band_ref = frame_max.max(self.band_ref * rel).max(0.0012);
+        let band_gain = 0.9 / self.band_ref;
+        let release = (-dt * 4.5).exp();
+        let mut bands = [0.0f32; N_BANDS];
+        for b in 0..N_BANDS {
+            let target = (raw[b] * band_gain).min(1.0).powf(0.7);
+            self.smoothed[b] = target.max(self.smoothed[b] * release);
             bands[b] = self.smoothed[b];
         }
 
-        // Broad bands (instantaneous RMS-style energy).
-        let energy = |lo: f32, hi: f32| -> f32 {
-            let (lob, hib) = (to_bin(lo), to_bin(hi).max(to_bin(lo)));
-            let mut s = 0.0f32;
-            let mut c = 0.0f32;
-            for k in lob..=hib.min(n_bins - 1) {
-                let v = self.spectrum[k].norm() * 2.0 / self.fft_len as f32;
-                s += v * v;
-                c += 1.0;
-            }
-            ((s / c.max(1.0)).sqrt() * gain).min(1.0)
+        // Broad bands derived from the normalized spectrum (already adaptive,
+        // balance preserved). Boundaries from the log map (~250 Hz, ~2 kHz).
+        let band_at = |hz: f32| -> usize {
+            (((hz.log2() - lmin) / (lmax - lmin)) * N_BANDS as f32).clamp(0.0, N_BANDS as f32) as usize
         };
+        let b_lo = band_at(250.0).clamp(1, N_BANDS - 1);
+        let b_hi = band_at(2000.0).clamp(b_lo + 1, N_BANDS);
+        let (mut bass_mean, mut bass_peak) = (0.0f32, 0.0f32);
+        for &v in &bands[0..b_lo] {
+            bass_mean += v;
+            bass_peak = bass_peak.max(v);
+        }
+        let bass = (bass_mean / b_lo as f32 * 0.4 + bass_peak * 0.6).min(1.0);
+        let mid = bands[b_lo..b_hi].iter().sum::<f32>() / (b_hi - b_lo) as f32;
+        let treble = bands[b_hi..N_BANDS].iter().sum::<f32>() / (N_BANDS - b_hi) as f32;
 
         Features {
             bands,
             rms,
-            bass: energy(30.0, 250.0),
-            mid: energy(250.0, 2000.0),
-            treble: energy(2000.0, f_max),
+            bass,
+            mid,
+            treble,
             beat: None, // filled in by the caller from the track's beat grid
         }
     }

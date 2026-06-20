@@ -30,11 +30,13 @@ impl Scope {
 
     fn sample(wave: &[f32]) -> Vec<f32> {
         let n = wave.len().max(1);
+        // Normalize by the window peak so the trace shows shape at any track level.
+        let norm = 0.7 / wave.iter().fold(0.0f32, |m, &x| m.max(x.abs())).max(0.05);
         (0..NPTS)
             .map(|i| {
                 let f = i as f32 / (NPTS - 1) as f32;
                 let idx = ((f * (n - 1) as f32) as usize).min(n - 1);
-                wave[idx]
+                wave[idx] * norm
             })
             .collect()
     }
