@@ -1,4 +1,4 @@
-# 🍒 Cherry
+# 🍒 Cherry Visualizer
 
 **A native, open-source music visualizer where the audio plays the game.**
 
@@ -103,10 +103,10 @@ cargo run --release            # build + launch
 cargo run --release -- --file path\to\song.mp3
 ```
 
-The binary lands at `target/release/cherry.exe` — copy it anywhere and
-double-click it. Supports mp3, wav, flac, ogg, m4a.
+The binary lands at `target/release/cherry-visualizer.exe` — copy it anywhere
+and double-click it. Supports mp3, wav, flac, ogg, m4a.
 
-Cherry opens to a normal **desktop UI** (egui): a **menu bar** (File / View /
+Cherry Visualizer opens to a normal **desktop UI** (egui): a **menu bar** (File / View /
 Help), a **tabbed sidebar** — *Modes* (pick the visualizer), *Settings* (live
 sliders for the selected mode), *Library*, *Export* — and a **transport bar**
 with play/pause, a seek slider, and volume. Open a track from **File → Open** (it

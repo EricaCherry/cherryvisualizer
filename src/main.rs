@@ -1,4 +1,4 @@
-//! Cherry — a native, modular music visualizer with a desktop UI.
+//! Cherry Visualizer — a native, modular music visualizer with a desktop UI.
 //!
 //! The window has a normal application chrome (egui): a menu bar, a tabbed
 //! sidebar (Modes / Settings / Library / Export), and a transport bar with a
@@ -74,7 +74,7 @@ fn settings_from(res: u32, fps: u32) -> ExportSettings {
 
 fn window_conf() -> Conf {
     Conf {
-        window_title: "Cherry".to_owned(),
+        window_title: "Cherry Visualizer".to_owned(),
         window_width: 1320,
         window_height: 760,
         window_resizable: true,
@@ -145,7 +145,7 @@ fn parse_args() -> Args {
 }
 
 fn print_help() {
-    println!("Cherry — a native music visualizer where the audio plays the game.\n");
+    println!("Cherry Visualizer — a native music visualizer where the audio plays the game.\n");
     println!("USAGE:\n  cherry [--file <audio>]            launch the desktop app\n");
     println!("OPTIONS:");
     println!("  --file <path>            open an audio file (mp3/wav/flac/ogg/m4a)");
@@ -747,7 +747,7 @@ fn build_ui(ctx: &egui::Context, data: &UiData, ui: &mut UiState, actions: &mut 
                 }
             });
             bar.menu_button("Help", |m| {
-                if m.button("About Cherry").clicked() {
+                if m.button("About Cherry Visualizer").clicked() {
                     actions.push(Action::ShowAbout);
                     m.close_menu();
                 }
@@ -840,13 +840,13 @@ fn build_ui(ctx: &egui::Context, data: &UiData, ui: &mut UiState, actions: &mut 
 
     // ---- About window -----------------------------------------------------
     let mut about_open = ui.about_open;
-    egui::Window::new("About Cherry")
+    egui::Window::new("About Cherry Visualizer")
         .open(&mut about_open)
         .collapsible(false)
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
         .show(ctx, |w| {
-            w.heading("Cherry");
+            w.heading("Cherry Visualizer");
             w.label("A native, open-source music visualizer the song plays.");
             w.add_space(6.0);
             w.label("Open a track, pick a mode, and the audio plays the game.");

@@ -1,7 +1,8 @@
 [package]
-name = "cherry"
+name = "cherry-visualizer"
 version = "0.1.0"
 edition = "2024"
+description = "A native, open-source music visualizer where the audio plays the game"
 
 [dependencies]
 egui-macroquad = { version = "0.17.3", default-features = false }
