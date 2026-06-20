@@ -1,4 +1,4 @@
-# 🍒 Cherry
+# 🍒 Cherry Visualizer
 
 **A native, open-source music visualizer where the audio plays the game.**
 
