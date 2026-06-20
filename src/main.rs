@@ -228,6 +228,8 @@ enum Action {
     SetVolume(f32),
     RestartMode,
     SetTheme(usize),
+    /// Custom-theme anchors: background, body, hero, highlight (sRGB).
+    SetCustom([[u8; 3]; 4]),
     StartExport(ExportSettings),
     CancelExport,
 }
@@ -260,6 +262,8 @@ struct UiState {
     sidebar: bool,
     export_res: u32,
     export_fps: u32,
+    /// Custom-theme anchor colors (background, body, hero, highlight), sRGB.
+    custom_anchors: [[u8; 3]; 4],
     /// A transient top-of-screen toast (message, seconds left) for errors that
     /// would otherwise only hit stderr (file-open / export failures).
     banner: Option<(String, f32)>,
@@ -344,6 +348,8 @@ async fn main() {
         sidebar: true,
         export_res: 1080,
         export_fps: 60,
+        // seeded from the Dusk Encom palette (background, body, hero, highlight)
+        custom_anchors: [[0x0b, 0x10, 0x14], [0x3f, 0x9a, 0xa0], [0xe0, 0x8a, 0x3c], [0xec, 0xe3, 0xcf]],
         banner: None,
     };
 
@@ -530,7 +536,7 @@ async fn main() {
                 modes: modes.iter().map(|m| (m.name(), m.about())).collect(),
                 sel,
                 params: modes[sel].params(),
-                themes: style::themes().iter().map(|t| t.name).collect(),
+                themes: style::theme_names(),
                 theme: style::current_theme(),
                 loading: loading.is_some(),
                 exporting: exporter.is_some(),
@@ -602,6 +608,17 @@ async fn main() {
                         style::set_theme(i);
                         if let Some(p) = postfx.as_mut() {
                             p.reset(); // trails would otherwise be the old palette
+                        }
+                    }
+                    Action::SetCustom(a) => {
+                        let col = |c: [u8; 3]| {
+                            Color::new(c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0, 1.0)
+                        };
+                        let pal = style::palette_from_anchors(col(a[0]), col(a[1]), col(a[2]), col(a[3]));
+                        style::set_custom(pal);
+                        style::set_theme(style::theme_count() - 1); // re-activate Custom + rebake
+                        if let Some(p) = postfx.as_mut() {
+                            p.reset();
                         }
                     }
                     Action::StartExport(settings) => {
@@ -831,7 +848,7 @@ fn build_ui(ctx: &egui::Context, data: &UiData, ui: &mut UiState, actions: &mut 
                 s.separator();
                 egui::ScrollArea::vertical().show(s, |s| match ui.tab {
                     Tab::Modes => tab_modes(s, data, actions),
-                    Tab::Settings => tab_settings(s, data, actions),
+                    Tab::Settings => tab_settings(s, ui, data, actions),
                     Tab::Library => tab_library(s, data, actions),
                     Tab::Export => tab_export(s, ui, data, actions),
                 });
@@ -902,7 +919,7 @@ fn tab_modes(ui: &mut egui::Ui, data: &UiData, actions: &mut Vec<Action>) {
     }
 }
 
-fn tab_settings(ui: &mut egui::Ui, data: &UiData, actions: &mut Vec<Action>) {
+fn tab_settings(ui: &mut egui::Ui, st: &mut UiState, data: &UiData, actions: &mut Vec<Action>) {
     // ---- theme (global, applies to every mode + exports) ------------------
     ui.add_space(4.0);
     ui.label(egui::RichText::new("Theme").strong());
@@ -915,6 +932,23 @@ fn tab_settings(ui: &mut egui::Ui, data: &UiData, actions: &mut Vec<Action>) {
                 }
             }
         });
+    // Custom palette pickers — only when the last theme (Custom) is selected.
+    if data.theme + 1 == data.themes.len() {
+        ui.add_space(6.0);
+        ui.label(egui::RichText::new("Custom palette").weak().small());
+        let mut changed = false;
+        for (i, label) in ["Background", "Body", "Hero", "Highlight"].iter().enumerate() {
+            ui.horizontal(|h| {
+                if h.color_edit_button_srgb(&mut st.custom_anchors[i]).changed() {
+                    changed = true;
+                }
+                h.label(*label);
+            });
+        }
+        if changed {
+            actions.push(Action::SetCustom(st.custom_anchors));
+        }
+    }
     ui.add_space(8.0);
     ui.separator();
     ui.add_space(4.0);

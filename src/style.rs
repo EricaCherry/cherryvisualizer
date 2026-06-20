@@ -32,11 +32,6 @@ pub struct Palette {
     pub ember_shadow: Color,
 }
 
-pub struct Theme {
-    pub name: &'static str,
-    pub palette: Palette,
-}
-
 fn rgb(hex: u32) -> Color {
     Color::new(
         ((hex >> 16) & 0xff) as f32 / 255.0,
@@ -46,49 +41,180 @@ fn rgb(hex: u32) -> Color {
     )
 }
 
-/// The curated themes. "Dusk Encom" is the house look; the rest map artistic
-/// palettes from lospec.com/palette-list (SLSO8, Nyx8, Oil 6, Apollo) onto the
-/// eight roles. Order: ink, slate, teal_deep, teal, amber, amber_glow, spec, ember.
-pub fn themes() -> Vec<Theme> {
-    #[allow(clippy::too_many_arguments)]
-    fn t(
-        name: &'static str,
-        ink: u32,
-        slate: u32,
-        teal_deep: u32,
-        teal: u32,
-        amber: u32,
-        amber_glow: u32,
-        spec: u32,
-        ember_shadow: u32,
-    ) -> Theme {
-        Theme {
-            name,
-            palette: Palette {
-                ink: rgb(ink),
-                slate: rgb(slate),
-                teal_deep: rgb(teal_deep),
-                teal: rgb(teal),
-                amber: rgb(amber),
-                amber_glow: rgb(amber_glow),
-                spec: rgb(spec),
-                ember_shadow: rgb(ember_shadow),
-            },
-        }
-    }
-    vec![
-        t("Dusk Encom", 0x0b1014, 0x11181d, 0x16323a, 0x3f9aa0, 0xe08a3c, 0xf2b46a, 0xece3cf, 0x1a120c),
-        t("Sunset", 0x0d2b45, 0x1b3a52, 0x2f4a60, 0x5e7e93, 0xe0894e, 0xffaa5e, 0xffecd6, 0x2a1810),
-        t("Nyx", 0x08141e, 0x0f2a3f, 0x20394f, 0x4d6a80, 0xc98f6b, 0xf6d6bd, 0xffeede, 0x1c1014),
-        t("Oil Dream", 0x191a2e, 0x272744, 0x3c3c63, 0x8b6d9c, 0xd28f7e, 0xf2d3ab, 0xfbf5ef, 0x241526),
-        t("Forest", 0x090a14, 0x10141f, 0x19332d, 0x468232, 0xde9e41, 0xe8c170, 0xe7d5b3, 0x1a1208),
-        t("Ember", 0x090a14, 0x241527, 0x5a2e2a, 0xbe772b, 0x73bed3, 0xa4dddb, 0xebede9, 0x341c27),
-    ]
+// ---- mapping any artist palette onto the 8 roles ---------------------------
+
+fn lum(c: Color) -> f32 {
+    0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
+}
+/// Warm/cool axis: +1 red/orange, -1 cyan/blue, ~0 for greys.
+fn warmth(c: Color) -> f32 {
+    let x = c.r - 0.5 * (c.g + c.b);
+    let y = 0.866_025_4 * (c.g - c.b);
+    let mag = (x * x + y * y).sqrt();
+    if mag < 1e-4 { 0.0 } else { x / mag }
+}
+fn sat(c: Color) -> f32 {
+    let mx = c.r.max(c.g).max(c.b);
+    let mn = c.r.min(c.g).min(c.b);
+    if mx < 1e-4 { 0.0 } else { (mx - mn) / mx }
+}
+fn darken(c: Color, k: f32) -> Color {
+    Color::new(c.r * k, c.g * k, c.b * k, 1.0)
+}
+fn lighten(c: Color, k: f32) -> Color {
+    mix(c, WHITE, k)
 }
 
+/// Map an arbitrary 3..=48-color artist palette onto the eight fixed roles —
+/// darkest→ink, lightest→cream spec, the coolest mids→body, the warmest/most
+/// saturated mids→hero. Missing roles are synthesised so even a 3-color palette
+/// yields a full, monotonic palette. Deterministic; never panics.
+pub fn from_colors(cols: &[Color]) -> Palette {
+    if cols.is_empty() {
+        return active();
+    }
+    let mut c: Vec<Color> = cols.iter().copied().take(48).collect();
+    c.sort_by(|a, b| lum(*a).total_cmp(&lum(*b)));
+    let n = c.len();
+
+    // Force a deep dark ground (keep the darkest hue, but pull it dark) so even
+    // an all-bright palette still reads as a dark-room visualizer.
+    let dark = |c: Color, target: f32| darken(c, (target / lum(c).max(0.02)).min(1.0));
+    let ink = dark(c[0], 0.05);
+    let slate = if n >= 2 { dark(c[1], 0.085) } else { lighten(ink, 0.12) };
+    let bright = c[n - 1];
+    let spec = mix(bright, Color::new(0.96, 0.93, 0.84, 1.0), 0.30); // lifted, never clinical white
+
+    let lo = 2usize.min(n - 1);
+    let hi = n.saturating_sub(1).max(lo);
+    let mids: Vec<Color> = if hi > lo { c[lo..hi].to_vec() } else { c.clone() };
+
+    let coolest = *mids.iter().min_by(|a, b| warmth(**a).total_cmp(&warmth(**b))).unwrap();
+    let warmest = *mids.iter().max_by(|a, b| warmth(**a).total_cmp(&warmth(**b))).unwrap();
+    let cool_lo = *mids.iter().min_by(|a, b| (warmth(**a) + lum(**a)).total_cmp(&(warmth(**b) + lum(**b)))).unwrap();
+
+    // Cool BODY (teal_deep darker than teal). If the palette is all-warm, derive
+    // a cool body by blending the ground toward teal.
+    let (teal_deep, teal) = if warmth(coolest) > 0.25 {
+        let synth = mix(slate, Color::new(0.25, 0.55, 0.58, 1.0), 0.45);
+        (darken(synth, 0.7), synth)
+    } else {
+        let a = darken(cool_lo, 0.62);
+        let b = if lum(coolest) > lum(a) + 0.05 { coolest } else { lighten(coolest, 0.25) };
+        (a, b)
+    };
+
+    // Warm HERO (amber_glow brighter than amber). If the palette is all-cool,
+    // derive amber from the brightest pushed warm.
+    let warm = *mids
+        .iter()
+        .max_by(|a, b| (warmth(**a) * 0.6 + sat(**a) * 0.4).total_cmp(&(warmth(**b) * 0.6 + sat(**b) * 0.4)))
+        .unwrap_or(&warmest);
+    let amber = if warmth(warm) < 0.05 { mix(bright, Color::new(0.88, 0.55, 0.25, 1.0), 0.55) } else { warm };
+    let amber_glow = lighten(amber, 0.28);
+
+    let warm_dark = mids.iter().filter(|x| warmth(**x) > 0.1).min_by(|a, b| lum(**a).total_cmp(&lum(**b))).copied();
+    let ember_shadow = darken(warm_dark.unwrap_or(mix(ink, amber, 0.35)), 0.7);
+
+    Palette { ink, slate, teal_deep, teal, amber, amber_glow, spec, ember_shadow }
+}
+
+/// Build a full palette from four hand-set anchors (used by the Custom theme).
+pub fn palette_from_anchors(ink: Color, body: Color, hero: Color, spec: Color) -> Palette {
+    Palette {
+        ink,
+        slate: lighten(ink, 0.08),
+        teal_deep: darken(body, 0.55),
+        teal: body,
+        amber: hero,
+        amber_glow: lighten(hero, 0.28),
+        spec,
+        ember_shadow: darken(mix(ink, hero, 0.4), 0.7),
+    }
+}
+
+/// The house palette — hand-tuned, the default theme.
+fn dusk_encom() -> Palette {
+    Palette {
+        ink: rgb(0x0b1014),
+        slate: rgb(0x11181d),
+        teal_deep: rgb(0x16323a),
+        teal: rgb(0x3f9aa0),
+        amber: rgb(0xe08a3c),
+        amber_glow: rgb(0xf2b46a),
+        spec: rgb(0xece3cf),
+        ember_shadow: rgb(0x1a120c),
+    }
+}
+
+/// Artist palettes from lospec.com/palette-list (any color count — these run
+/// 4..46), mapped onto the roles by [`from_colors`].
+#[rustfmt::skip]
+const LOSPEC: &[(&str, &[u32])] = &[
+    ("Oil 6", &[0xfbf5ef,0xf2d3ab,0xc69fa5,0x8b6d9c,0x494d7e,0x272744]),
+    ("Twilight 5", &[0xfbbbad,0xee8695,0x4a7a96,0x333f58,0x292831]),
+    ("Kirokaze GB", &[0x332c50,0x46878f,0x94e344,0xe2f3e4]),
+    ("Mist GB", &[0x2d1b00,0x1e606e,0x5ab9a8,0xc4f0c2]),
+    ("Ice Cream GB", &[0x7c3f58,0xeb6b6f,0xf9a875,0xfff6d3]),
+    ("Rustic GB", &[0x2c2137,0x764462,0xedb4a1,0xa96868]),
+    ("2bit Demichrome", &[0x211e20,0x555568,0xa0a08b,0xe9efec]),
+    ("Hollow", &[0x0f0f1b,0x565a75,0xc6b7be,0xfafbf6]),
+    ("Kankei4", &[0xffffff,0xf42e1f,0x2f256b,0x060608]),
+    ("Lava GB", &[0x051f39,0x4a2480,0xc53a9d,0xff8e80]),
+    ("Moonlight GB", &[0x0f052d,0x203671,0x36868f,0x5fc75d]),
+    ("SpaceHaze", &[0xf8e3c4,0xcc3495,0x6b1fb1,0x0b0630]),
+    ("SLSO8", &[0x0d2b45,0x203c56,0x544e68,0x8d697a,0xd08159,0xffaa5e,0xffd4a3,0xffecd6]),
+    ("Nyx8", &[0x08141e,0x0f2a3f,0x20394f,0xf6d6bd,0xc3a38a,0x997577,0x816271,0x4e495f]),
+    ("Ammo 8", &[0x040c06,0x112318,0x1e3a29,0x305d42,0x4d8061,0x89a257,0xbedc7f,0xeeffcc]),
+    ("FunkyFuture 8", &[0x2b0f54,0xab1f65,0xff4f69,0xfff7f8,0xff8142,0xffda45,0x3368dc,0x49e7ec]),
+    ("Citrink", &[0xffffff,0xfcf660,0xb2d942,0x52c33f,0x166e7a,0x254d70,0x252446,0x201533]),
+    ("Dreamscape8", &[0xc9cca1,0xcaa05a,0xae6a47,0x8b4049,0x543344,0x515262,0x63787d,0x8ea091]),
+    ("PICO-8", &[0x000000,0x1d2b53,0x7e2553,0x008751,0xab5236,0x5f574f,0xc2c3c7,0xfff1e8,0xff004d,0xffa300,0xffec27,0x00e436,0x29adff,0x83769c,0xff77a8,0xffccaa]),
+    ("Sweetie 16", &[0x1a1c2c,0x5d275d,0xb13e53,0xef7d57,0xffcd75,0xa7f070,0x38b764,0x257179,0x29366f,0x3b5dc9,0x41a6f6,0x73eff7,0xf4f4f4,0x94b0c2,0x566c86,0x333c57]),
+    ("NA16", &[0x8c8fae,0x584563,0x3e2137,0x9a6348,0xd79b7d,0xf5edba,0xc0c741,0x647d34,0xe4943a,0x9d303b,0xd26471,0x70377f,0x7ec4c1,0x34859d,0x17434b,0x1f0e1c]),
+    ("Endesga 16", &[0xe4a672,0xb86f50,0x743f39,0x3f2832,0x9e2835,0xe53b44,0xfb922b,0xffe762,0x63c64d,0x327345,0x193d3f,0x4f6781,0xafbfd2,0xffffff,0x2ce8f4,0x0484d1]),
+    ("Bubblegum 16", &[0x16171a,0x7f0622,0xd62411,0xff8426,0xffd100,0xfafdff,0xff80a4,0xff2674,0x94216a,0x430067,0x234975,0x68aed4,0xbfff3c,0x10d275,0x007899,0x002859]),
+    ("Vinik24", &[0x000000,0x6f6776,0x9a9a97,0xc5ccb8,0x8b5580,0xc38890,0xa593a5,0x666092,0x9a4f50,0xc28d75,0x7ca1c0,0x416aa3,0x8d6268,0xbe955c,0x68aca9,0x387080,0x6e6962,0x93a167,0x6eaa78,0x557064,0x9d9f7f,0x7e9e99,0x5d6872,0x433455]),
+    ("Fantasy 24", &[0x1f240a,0x39571c,0xa58c27,0xefac28,0xefd8a1,0xab5c1c,0x183f39,0xef692f,0xefb775,0xa56243,0x773421,0x724113,0x2a1d0d,0x392a1c,0x684c3c,0x927e6a,0x276468,0xef3a0c,0x45230d,0x3c9f9c,0x9b1a0a,0x36170c,0x550f0a,0x300f0a]),
+    ("Apollo", &[0x172038,0x253a5e,0x3c5e8b,0x4f8fba,0x73bed3,0xa4dddb,0x19332d,0x25562e,0x468232,0x75a743,0xa8ca58,0xd0da91,0x4d2b32,0x7a4841,0xad7757,0xc09473,0xd7b594,0xe7d5b3,0x884b2b,0xbe772b,0xde9e41,0xe8c170,0x090a14,0x10141f,0x202e37,0x394a50,0x577277,0x819796,0xa8b5b2,0xc7cfcc,0xebede9]),
+];
+
 thread_local! {
-    static ACTIVE: RefCell<Palette> = RefCell::new(themes()[0].palette);
+    static BASE: RefCell<Option<Vec<(&'static str, Palette)>>> = const { RefCell::new(None) };
+    static ACTIVE: RefCell<Palette> = RefCell::new(dusk_encom());
     static THEME_IDX: Cell<usize> = const { Cell::new(0) };
+    static CUSTOM: RefCell<Option<Palette>> = const { RefCell::new(None) };
+}
+
+/// The non-custom themes (house + Lospec), built once and cached.
+fn base_themes() -> Vec<(&'static str, Palette)> {
+    BASE.with(|b| {
+        if b.borrow().is_none() {
+            let mut v: Vec<(&'static str, Palette)> = vec![("Dusk Encom", dusk_encom())];
+            for (name, hexes) in LOSPEC {
+                let cols: Vec<Color> = hexes.iter().map(|&h| rgb(h)).collect();
+                v.push((name, from_colors(&cols)));
+            }
+            *b.borrow_mut() = Some(v);
+        }
+        b.borrow().clone().unwrap()
+    })
+}
+
+/// Total theme count, including the trailing live "Custom" slot.
+pub fn theme_count() -> usize {
+    base_themes().len() + 1
+}
+
+/// Theme names for the picker (last is "Custom").
+pub fn theme_names() -> Vec<&'static str> {
+    let mut n: Vec<&'static str> = base_themes().iter().map(|(s, _)| *s).collect();
+    n.push("Custom");
+    n
+}
+
+pub fn current_theme() -> usize {
+    THEME_IDX.with(|c| c.get())
 }
 
 /// The active palette (a snapshot — `Palette` is `Copy`).
@@ -96,15 +222,23 @@ pub fn active() -> Palette {
     ACTIVE.with(|c| *c.borrow())
 }
 
-pub fn current_theme() -> usize {
-    THEME_IDX.with(|c| c.get())
+pub fn custom_palette() -> Palette {
+    CUSTOM.with(|c| c.borrow().unwrap_or_else(dusk_encom))
 }
 
-/// Switch the active theme and rebake the palette-dependent textures.
+/// Set the editable Custom palette (does not re-activate it).
+pub fn set_custom(p: Palette) {
+    CUSTOM.with(|c| *c.borrow_mut() = Some(p));
+}
+
+/// Switch the active theme and rebake the palette-dependent textures. The last
+/// index selects the live Custom palette.
 pub fn set_theme(i: usize) {
-    let ts = themes();
-    let i = i.min(ts.len() - 1);
-    ACTIVE.with(|c| *c.borrow_mut() = ts[i].palette);
+    let base = base_themes();
+    let custom_idx = base.len();
+    let i = i.min(custom_idx);
+    let pal = if i == custom_idx { custom_palette() } else { base[i].1 };
+    ACTIVE.with(|c| *c.borrow_mut() = pal);
     THEME_IDX.with(|c| c.set(i));
     invalidate_baked();
 }
