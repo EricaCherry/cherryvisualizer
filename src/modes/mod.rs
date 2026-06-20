@@ -6,6 +6,7 @@
 //! here + one line in `main.rs`.
 
 pub mod breakout;
+pub mod railshooter;
 pub mod scope;
 pub mod spectrogram;
 pub mod spectrum;

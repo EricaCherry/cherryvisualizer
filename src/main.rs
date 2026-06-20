@@ -29,6 +29,7 @@ use analysis::{features_at, Analyser, FFT_LEN};
 use audio::AudioEngine;
 use export::{ExportSettings, Exporter};
 use modes::breakout::Breakout;
+use modes::railshooter::RailShooter;
 use modes::scope::Scope;
 use modes::spectrogram::Spectrogram;
 use modes::spectrum::Spectrum;
@@ -43,13 +44,14 @@ const SHOT_FRAMES: u32 = 180;
 /// The mode registry — the single source of truth for the picker, the factory,
 /// and `MODE_COUNT`. Add a mode here (plus its `mod` line) and it appears
 /// everywhere; nothing else to keep in sync.
-const MODES: [fn() -> Box<dyn Mode>; 6] = [
+const MODES: [fn() -> Box<dyn Mode>; 7] = [
     || Box::new(Breakout::new()),
     || Box::new(Spectrum::new()),
     || Box::new(Scope::new()),
     || Box::new(Spectrogram::new()),
     || Box::new(Starfield::new()),
     || Box::new(Surfer::new()),
+    || Box::new(RailShooter::new()),
 ];
 const MODE_COUNT: usize = MODES.len();
 

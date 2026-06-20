@@ -32,8 +32,6 @@ pub struct Profile {
     pub rms: Vec<f32>,
     pub max_rms: f32,
     /// Per-hop mid-band energy (~180 Hz – 2 kHz), normalized 0..1.
-    /// (Choreography layer for future modes; treble and bass are in use today.)
-    #[allow(dead_code)]
     pub mid: Vec<f32>,
     /// Per-hop treble energy (above ~2 kHz), normalized 0..1.
     pub treb: Vec<f32>,
@@ -122,6 +120,11 @@ impl Profile {
     /// Normalized treble energy at time `t` (coin/sparkle layer).
     pub fn treble_at(&self, t: f32) -> f32 {
         Self::sample(&self.treb, self.hop_dt, t)
+    }
+
+    /// Normalized mid energy at time `t` (the body of the song).
+    pub fn mid_at(&self, t: f32) -> f32 {
+        Self::sample(&self.mid, self.hop_dt, t)
     }
 
     fn sample(curve: &[f32], hop_dt: f32, t: f32) -> f32 {
