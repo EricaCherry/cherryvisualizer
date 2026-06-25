@@ -1,85 +1,39 @@
-//! Beat Surfer — a 3D lane runner (Subway-Surfers style) played by the music.
+//! Beat Surfer — a Vib-Ribbon-style auto-runner the music plays.
 //!
-//! Nobody is holding the phone. At load, the whole track's beat grid is turned
-//! into choreography:
-//!   - strong, spaced beats become TRAINS in the player's lane, with a swerve
-//!     scheduled half a second before they arrive;
-//!   - every other beat becomes a BARRIER, and the jump is timed so its apex
-//!     lands exactly on the beat (T-Rex timing: ~0.55 s of air);
-//!   - offline treble runs become coin TRAILS laid along the player's own
-//!     future path — curving through swerves, arcing over jumps — so every
-//!     coin is collected exactly on the music.
+//! Nobody is holding the controller. At load the whole track is turned into a
+//! single ribbon course by [`crate::modes::course`]: each beat becomes a TYPED,
+//! well-spaced obstacle — an arch to jump (heavy/bass), a ring to spin through
+//! (sustained mid), low teeth to roll over (treble), or a gap to stride (the
+//! music dropping out). A min-gap sweep in distance guarantees the obstacles
+//! never crowd each other, so the avatar's pose is a clean pure function of how
+//! far it has travelled — no stacked jump parabolas, no mid-air snapping.
 //!
-//! Live layers animate different parts of the world each frame:
-//!   bass    -> portal pylons pulse, the sun swells
-//!   mids    -> building heights breathe, train windows glow
-//!   treble  -> coins shimmer and spin, stars twinkle, rails brighten
-//!   rms     -> world speed (offline curve) + camera FOV pulse
-//!   bands   -> the skyline silhouettes on the horizon
-//!   beats   -> a small camera kick
-//!
-//! Rendering is immediate-mode 3D with hand-rolled distance fog (every draw
-//! color is lerped toward the horizon color) and wire outlines for a flat,
-//! readable low-poly look. No textures, no shaders, no neon.
+//! The track itself is one undulating ribbon mesh whose centreline IS the
+//! obstacle height field (so a jump arch lifts the road and a gap dips it),
+//! rippled live by the waveform. Coins ride the player's own future path. The
+//! sky, sun, stars and skyline are a 2D backdrop the 3D world fades into.
 
 use macroquad::prelude::*;
 
+use crate::modes::course::{Ev, Kind, build_course};
 use crate::modes::{Category, FrameCtx, Mode};
-use crate::style::{self, amber, amber_glow, hash01, spec, teal};
+use crate::style::{self, amber, amber_glow, grade, hash01, mix, spec, teal};
 use crate::track::Track;
 use crate::view;
 
 // ---- world tuning -----------------------------------------------------------
-const LANE_W: f32 = 2.3;
-const ROAD_HALF: f32 = 3.55;
-const FAR: f32 = 80.0;
+const ROAD_HALF: f32 = 3.4;
+const FAR: f32 = 78.0;
 const BASE_SPEED: f32 = 14.0; // m/s at average loudness
+const APEX: f32 = 1.2; // jump apex height
+const ARC_M: f32 = 4.0; // half-length (m) of one obstacle's clear motion
+const MIN_GAP_M: f32 = 9.0; // > 2*ARC_M, so obstacle windows are disjoint
 
-// Jump kinematics: keep the Chromium T-Rex feel (~0.55 s airtime).
-const AIR_T: f32 = 0.55;
-const APEX: f32 = 1.15;
-const JUMP_G: f32 = 8.0 * APEX / (AIR_T * AIR_T);
-const JUMP_V0: f32 = JUMP_G * AIR_T / 2.0;
-
-// Choreography.
-const TRAIN_STRENGTH: f32 = 2.0;
-const TRAIN_MIN_GAP: f32 = 2.5;
-const SWITCH_LEAD: f32 = 0.5;
-const SWITCH_DUR: f32 = 0.35;
-// Jumps only on prominent, WELL-SPACED beats — the gap exceeds the airtime so
-// jump windows can never overlap (which caused the erratic mid-air snapping).
-const BARRIER_STRENGTH: f32 = 1.7;
-const BARRIER_MIN_GAP: f32 = 0.85;
-
-// Palette — re-keyed to the shared "Dusk Encom" master palette so Surfer reads
-// as the same film as the 2D modes (dusk, flat, no neon).
-const HORIZON: Color = Color::new(0.115, 0.10, 0.105, 1.0); // warm dusk slate
-const ROAD: Color = Color::new(0.10, 0.12, 0.14, 1.0);
-const GROUND: Color = Color::new(0.08, 0.09, 0.11, 1.0);
-// sky_top (= theme ink) and coin (= theme hero) are now theme-driven, so they
-// are read at the top of draw() instead of being consts.
-const PLAYER_BODY: Color = Color::new(0.78, 0.27, 0.30, 1.0); // cherry red — the brand hero
+// Palette — keyed to the shared "Dusk Encom" master palette so Surfer reads as
+// the same film as the 2D modes (dusk, flat, no neon).
+const HORIZON: Color = Color::new(0.115, 0.10, 0.105, 1.0);
+const PLAYER_BODY: Color = Color::new(0.80, 0.27, 0.30, 1.0); // cherry red — the hero
 const PLAYER_SKIN: Color = Color::new(0.88, 0.78, 0.66, 1.0);
-
-struct Switch {
-    t: f32, // swerve starts here
-    from_x: f32,
-    to_x: f32,
-}
-
-struct Train {
-    t: f32, // moment its front reaches the player
-    d: f32,
-    x: f32,
-    len: f32,
-    hue: usize,
-}
-
-struct Barrier {
-    t: f32, // the beat it lands on
-    d: f32,
-    x: f32,
-}
 
 struct CoinSpot {
     t: f32,
@@ -101,9 +55,7 @@ struct Sparkle {
 pub struct Surfer {
     hop_dt: f32,
     dist: Vec<f32>,
-    switches: Vec<Switch>,
-    trains: Vec<Train>,
-    barriers: Vec<Barrier>,
+    course: Vec<Ev>,
     coins: Vec<CoinSpot>,
     sparkles: Vec<Sparkle>,
     prev_collected: usize,
@@ -115,9 +67,7 @@ impl Surfer {
         Surfer {
             hop_dt: 1.0 / 60.0,
             dist: vec![0.0],
-            switches: Vec::new(),
-            trains: Vec::new(),
-            barriers: Vec::new(),
+            course: Vec::new(),
             coins: Vec::new(),
             sparkles: Vec::new(),
             prev_collected: 0,
@@ -135,59 +85,150 @@ impl Surfer {
         self.dist[i] * (1.0 - frac) + self.dist[i + 1] * frac
     }
 
-    /// Player x at time `t`, eased through the scheduled swerves.
-    fn lane_x_at(&self, t: f32) -> f32 {
-        let i = self.switches.partition_point(|s| s.t <= t);
-        if i == 0 {
-            return self.switches.first().map_or(0.0, |s| s.from_x);
+    /// Approximate time at a cumulative distance (the ribbon colours by loudness).
+    fn t_at_dist(&self, d: f32) -> f32 {
+        if self.dist.len() < 2 {
+            return (d / BASE_SPEED).max(0.0);
         }
-        let s = &self.switches[i - 1];
-        let k = ((t - s.t) / SWITCH_DUR).clamp(0.0, 1.0);
-        let k = k * k * (3.0 - 2.0 * k); // smoothstep
-        s.from_x + (s.to_x - s.from_x) * k
+        let i = self.dist.partition_point(|&dd| dd < d).min(self.dist.len() - 1);
+        i as f32 * self.hop_dt
     }
 
-    /// Player height at time `t`: a jump parabola whose apex is on the beat.
-    fn jump_y_at(&self, t: f32) -> f32 {
-        let i = self.barriers.partition_point(|b| b.t - AIR_T / 2.0 <= t);
-        if i == 0 {
-            return 0.0;
+    /// A gentle, music-independent side-to-side weave so the runner feels alive
+    /// without it being a dodge (Vib-Ribbon is a single track).
+    fn weave(&self, d: f32) -> f32 {
+        (d * 0.045).sin() * 0.7 + (d * 0.013).sin() * 0.35
+    }
+
+    /// The ribbon centreline height at distance `d`: jump arches lift it, gaps
+    /// dip it. Because obstacles are >= MIN_GAP_M apart and each window is
+    /// 2*ARC_M wide (< MIN_GAP_M), at most one obstacle ever contributes here —
+    /// the curve is smooth and never restarts mid-motion (the old bug).
+    fn surface_y(&self, d: f32) -> f32 {
+        let mut y = 0.0f32;
+        let lo = self.course.partition_point(|e| e.d < d - ARC_M);
+        let mut i = lo;
+        while i < self.course.len() && self.course[i].d <= d + ARC_M {
+            let e = &self.course[i];
+            let k = ((d - (e.d - ARC_M)) / (2.0 * ARC_M)).clamp(0.0, 1.0);
+            let bump = (k * std::f32::consts::PI).sin();
+            match e.kind {
+                Kind::Block => y = y.max(bump * APEX * (0.85 + 0.08 * e.strength)),
+                Kind::Pit => y = y.min(-bump * 0.5),
+                _ => {}
+            }
+            i += 1;
         }
-        let ts = self.barriers[i - 1].t - AIR_T / 2.0;
-        let a = t - ts;
-        if a >= AIR_T {
-            return 0.0;
+        y
+    }
+
+    /// The obstacle the avatar is currently clearing, plus its progress 0..1.
+    fn active_event(&self, d: f32) -> Option<(&Ev, f32)> {
+        let lo = self.course.partition_point(|e| e.d < d - ARC_M);
+        let mut i = lo;
+        while i < self.course.len() && self.course[i].d <= d + ARC_M {
+            let e = &self.course[i];
+            if (d - e.d).abs() <= ARC_M {
+                let k = ((d - (e.d - ARC_M)) / (2.0 * ARC_M)).clamp(0.0, 1.0);
+                return Some((e, k));
+            }
+            i += 1;
         }
-        (JUMP_V0 * a - 0.5 * JUMP_G * a * a).max(0.0)
+        None
     }
 }
 
-/// Distance fog: exponential-squared lerp toward the horizon color (softer
-/// than linear — objects fade in instead of popping at the fog boundary).
+/// Distance fog: exponential-squared lerp toward the horizon color.
 fn fog(c: Color, dist: f32) -> Color {
-    let x = dist.max(0.0) * 0.029;
+    let x = dist.max(0.0) * 0.030;
     let f = (1.0 - (-x * x).exp()).clamp(0.0, 1.0);
-    Color::new(
-        c.r + (HORIZON.r - c.r) * f,
-        c.g + (HORIZON.g - c.g) * f,
-        c.b + (HORIZON.b - c.b) * f,
-        c.a,
-    )
+    Color::new(c.r + (HORIZON.r - c.r) * f, c.g + (HORIZON.g - c.g) * f, c.b + (HORIZON.b - c.b) * f, c.a)
 }
 
-/// Flat-shaded box with a darker wire outline (readable low-poly look).
-/// The wires are drawn 0.8% larger than the fill to avoid z-fighting flicker.
-fn box_outlined(center: Vec3, size: Vec3, c: Color) {
-    let dist = -center.z;
-    let fill = fog(c, dist);
-    draw_cube(center, size, None, fill);
-    if dist < FAR * 0.55 {
-        draw_cube_wires(
-            center,
-            size * 1.008,
-            fog(Color::new(c.r * 0.45, c.g * 0.45, c.b * 0.45, 1.0), dist),
-        );
+/// Rotate a vector: roll about X (lateral), then spin about Z (forward).
+fn rotv(v: Vec3, spin: f32, roll: f32) -> Vec3 {
+    let (sr, cr) = roll.sin_cos();
+    let p = vec3(v.x, v.y * cr - v.z * sr, v.y * sr + v.z * cr);
+    let (ss, cs) = spin.sin_cos();
+    vec3(p.x * cs - p.y * ss, p.x * ss + p.y * cs, p.z)
+}
+
+/// A bold 3D segment (a thin oriented box) — the building block for the glyphs.
+fn seg3d(a: Vec3, b: Vec3, thick: f32, c: Color) {
+    let ex = b - a;
+    let len = ex.length();
+    if len < 1e-4 {
+        return;
     }
+    let dir = ex / len;
+    let up = if dir.y.abs() > 0.9 { vec3(1.0, 0.0, 0.0) } else { vec3(0.0, 1.0, 0.0) };
+    let ey = dir.cross(up).normalize() * thick;
+    let ez = dir.cross(ey).normalize() * thick;
+    let origin = a - ey * 0.5 - ez * 0.5;
+    draw_affine_parallelepiped(origin, ex, ey, ez, None, fog(c, -(a.z + b.z) * 0.5));
+}
+
+/// One oriented box of the avatar, offset `lo` from the body pivot and rotated
+/// with it (so the whole figure can spin or roll as one).
+fn part(pivot: Vec3, lo: Vec3, half: Vec3, spin: f32, roll: f32, c: Color) {
+    let pc = pivot + rotv(lo, spin, roll);
+    let ex = rotv(vec3(half.x * 2.0, 0.0, 0.0), spin, roll);
+    let ey = rotv(vec3(0.0, half.y * 2.0, 0.0), spin, roll);
+    let ez = rotv(vec3(0.0, 0.0, half.z * 2.0), spin, roll);
+    let origin = pc - ex * 0.5 - ey * 0.5 - ez * 0.5;
+    draw_affine_parallelepiped(origin, ex, ey, ez, None, fog(c, -pc.z));
+}
+
+// ---- obstacle glyphs (all built from bold segments, no plain cubes) ---------
+
+/// BLOCK → a rounded archway to leap through.
+fn draw_arch(x: f32, base: f32, z: f32, w: f32, c: Color) {
+    let post = 0.45;
+    seg3d(vec3(x - w, base, z), vec3(x - w, base + post, z), 0.14, c);
+    seg3d(vec3(x + w, base, z), vec3(x + w, base + post, z), 0.14, c);
+    let cy = base + post;
+    let segs = 12;
+    let mut prev = vec3(x - w, cy, z);
+    for k in 1..=segs {
+        let a = std::f32::consts::PI * (1.0 - k as f32 / segs as f32);
+        let p = vec3(x + a.cos() * w, cy + a.sin() * w, z);
+        seg3d(prev, p, 0.14, c);
+        prev = p;
+    }
+}
+
+/// LOOP → a ring to spin through.
+fn draw_ring(x: f32, cy: f32, z: f32, r: f32, c: Color, treble: f32) {
+    let segs = 18;
+    let mut prev: Option<Vec3> = None;
+    for k in 0..=segs {
+        let a = k as f32 / segs as f32 * std::f32::consts::TAU;
+        let p = vec3(x + a.cos() * r, cy + a.sin() * r, z);
+        if let Some(q) = prev {
+            seg3d(q, p, 0.07 + 0.04 * treble, c);
+        }
+        prev = Some(p);
+    }
+}
+
+/// WAVE → a low zig-zag of teeth to roll over.
+fn draw_teeth(x: f32, base: f32, z: f32, w: f32, amp: f32, c: Color) {
+    let n = 6;
+    let mut prev = vec3(x - w, base + 0.08, z);
+    for k in 1..=n {
+        let f = k as f32 / n as f32;
+        let yy = base + 0.08 + if k % 2 == 0 { 0.0 } else { amp };
+        let p = vec3(x - w + 2.0 * w * f, yy, z);
+        seg3d(prev, p, 0.08, c);
+        prev = p;
+    }
+}
+
+/// PIT → the ribbon already dips; edge the mouth with two lip lines.
+fn draw_pit(x: f32, base: f32, z: f32, w: f32, c: Color) {
+    let lip = mix(c, teal(), 0.4);
+    seg3d(vec3(x - w, base, z + 0.7), vec3(x + w, base, z + 0.7), 0.09, lip);
+    seg3d(vec3(x - w, base, z - 0.7), vec3(x + w, base, z - 0.7), 0.09, lip);
 }
 
 impl Mode for Surfer {
@@ -196,7 +237,7 @@ impl Mode for Surfer {
     }
 
     fn about(&self) -> &'static str {
-        "A 3D lane runner the music plays: beats become trains, jumps, and coin trails."
+        "A Vib-Ribbon-style auto-runner the music plays: beats become a typed obstacle course."
     }
 
     fn category(&self) -> Category {
@@ -224,69 +265,21 @@ impl Mode for Surfer {
             self.dist.push(d);
         }
 
-        // ---- choreography: beats -> trains (swerve) or barriers (jump) -----
-        self.switches.clear();
-        self.trains.clear();
-        self.barriers.clear();
-        let mut lane = 0i32;
-        let mut last_train = -10.0f32;
-        let mut last_barrier = -10.0f32;
-        for (i, b) in p.beats.iter().enumerate() {
-            if b.t < 1.2 || b.t > track.duration() - 1.0 {
-                continue;
-            }
-            if b.strength >= TRAIN_STRENGTH && b.t - last_train > TRAIN_MIN_GAP {
-                // A train in the player's lane forces a dodge.
-                let dir = match lane {
-                    1 => -1,
-                    -1 => 1,
-                    _ => if i % 2 == 0 { 1 } else { -1 },
-                };
-                self.trains.push(Train {
-                    t: b.t,
-                    d: self.dist_at(b.t),
-                    x: lane as f32 * LANE_W,
-                    len: 11.0 + (b.strength - TRAIN_STRENGTH) * 4.0,
-                    hue: i % 3,
-                });
-                self.switches.push(Switch {
-                    t: b.t - SWITCH_LEAD,
-                    from_x: lane as f32 * LANE_W,
-                    to_x: (lane + dir) as f32 * LANE_W,
-                });
-                lane += dir;
-                last_train = b.t;
-            } else if b.strength >= BARRIER_STRENGTH
-                && b.t - last_barrier > BARRIER_MIN_GAP
-                && b.t - last_train > 0.6
-            {
-                // A hurdle to jump — only on a prominent beat, and far enough from
-                // the last jump that the airtime windows can't overlap (and not
-                // right on top of a lane swerve).
-                self.barriers.push(Barrier { t: b.t, d: self.dist_at(b.t), x: self.lane_x_at(b.t) });
-                last_barrier = b.t;
-            }
-        }
+        // The song designs the level: one typed, well-spaced obstacle course.
+        self.course = build_course(p, &self.dist, track.duration(), MIN_GAP_M);
 
-        // ---- coins: offline treble runs, laid on the player's future path ---
+        // Coins: offline treble runs laid along the player's own future path, so
+        // each coin is collected exactly on the music — arcing over jumps and
+        // dipping through gaps via the same surface the avatar reads.
         self.coins.clear();
         let mut last_coin = -1.0f32;
-        let n_hops = p.rms.len();
-        for h in 0..n_hops {
+        for h in 0..p.rms.len() {
             let t = h as f32 * p.hop_dt;
             if t < 1.2 || p.treble_at(t) < 0.5 || t - last_coin < 0.13 {
                 continue;
             }
-            // Not inside a train.
-            if self.trains.iter().any(|tr| t >= tr.t - 0.05 && t <= tr.t + tr.len / BASE_SPEED) {
-                continue;
-            }
-            self.coins.push(CoinSpot {
-                t,
-                d: self.dist_at(t),
-                x: self.lane_x_at(t),
-                y: 0.7 + self.jump_y_at(t),
-            });
+            let cd = self.dist_at(t);
+            self.coins.push(CoinSpot { t, d: cd, x: self.weave(cd), y: 0.6 + self.surface_y(cd) });
             last_coin = t;
         }
 
@@ -335,18 +328,15 @@ impl Mode for Surfer {
     fn draw(&self, ctx: &FrameCtx) {
         let t = ctx.time;
         let feat = ctx.feat;
-        let sky_top = style::ink(); // theme background
-        let coin = style::amber(); // theme hero (coins)
+        let prof = &ctx.track.profile;
+        let sky_top = style::ink();
+        let coin = style::amber();
         let d_now = self.dist_at(t);
-        let px = self.lane_x_at(t);
-        let py = self.jump_y_at(t);
-        // Banking: roll into the swerve, capped at ~8 degrees.
-        let lateral_v = (self.lane_x_at(t + 0.03) - self.lane_x_at(t - 0.03)) / 0.06;
-        let bank = (lateral_v * 0.022).clamp(-0.14, 0.14);
+        let px = self.weave(d_now);
+        let py = self.surface_y(d_now);
+        let bank = ((self.weave(d_now + 1.0) - self.weave(d_now - 1.0)) * 0.06).clamp(-0.12, 0.12);
 
         // ================= 2D backdrop (drawn before the 3D pass) ============
-        // In normal play this is the default screen camera; during export it
-        // points the 2D pass at the offscreen target.
         view::apply_screen_camera();
         clear_background(sky_top);
         let (sw, sh) = (view::screen_w(), view::screen_h());
@@ -362,8 +352,6 @@ impl Mode for Surfer {
             );
             draw_rectangle(0.0, horizon_y * k, sw, horizon_y / strips as f32 + 1.0, c);
         }
-        // Stars twinkle with the treble layer, gathered in two loose drifts.
-        // Size scales with the frame so they stay point-sized in HD exports.
         let star_px = (sh / 760.0 * 2.0).max(1.5);
         for i in 0..54 {
             let cx = if hash01(i * 7) < 0.66 { sw * 0.22 } else { sw * 0.72 };
@@ -373,198 +361,94 @@ impl Mode for Surfer {
             let a = (0.08 + 0.32 * feat.treble) * tw;
             draw_rectangle(x, y, star_px, star_px, Color::new(spec().r, spec().g, spec().b, a));
         }
-        // The sun swells with bass — off-center, warm amber, with a cream core
-        // so it reads as the one light source / hero of the frame.
         let sun_r = sh * (0.115 + 0.03 * feat.bass);
         let (sx, sy) = (sw * 0.62, horizon_y * 0.84);
         draw_circle(sx, sy, sun_r, Color::new(amber().r, amber().g, amber().b, 0.92));
         draw_circle(sx, sy, sun_r * 0.66, Color::new(amber_glow().r, amber_glow().g, amber_glow().b, 0.95));
         draw_circle(sx, sy, sun_r * 0.34, Color::new(spec().r, spec().g, spec().b, 0.9));
-        // Far skyline silhouettes = the spectrum.
         let n = feat.bands.len();
         let bw = sw / n as f32;
         for (i, &e) in feat.bands.iter().enumerate() {
             let h = sh * (0.012 + e * e * 0.075);
             draw_rectangle(i as f32 * bw, horizon_y - h, bw * 0.92, h, Color::new(0.11, 0.09, 0.14, 1.0));
         }
-        // Below the horizon, fill with the fog color (the 3D world fades into it).
         draw_rectangle(0.0, horizon_y, sw, sh - horizon_y, HORIZON);
 
         // ================= 3D pass ===========================================
         let fov = (58.0 + feat.rms * 9.0 + self.cam_kick * 14.0).to_radians();
         set_camera(&Camera3D {
-            position: vec3(px * 0.72, 2.7 + py * 0.25 + self.cam_kick * 0.12, 5.4),
-            target: vec3(px * 0.86, 1.15 + py * 0.45, -8.0),
+            position: vec3(px * 0.7, 2.7 + py * 0.25 + self.cam_kick * 0.12, 5.4),
+            target: vec3(px * 0.85, 1.1 + py * 0.45, -8.0),
             up: vec3(bank, 1.0, 0.0).normalize(),
             fovy: fov,
-            // Lock the aspect to the logical frame and route to the export
-            // target when one is active, so the 3D pass exports correctly.
             aspect: Some(view::screen_w() / view::screen_h()),
             render_target: view::export_target(),
             ..Default::default()
         });
 
-        // Road + shoulders, drawn as depth strips so the fog can take them —
-        // a flat untextured ground is what makes immediate-mode 3D look fake.
-        let strip = 7.0;
-        let mut z0 = 6.0;
-        while z0 > -FAR {
-            let zc = z0 - strip / 2.0;
-            draw_plane(vec3(0.0, 0.0, zc), vec2(ROAD_HALF, strip / 2.0), None, fog(ROAD, -zc));
-            for side in [-1.0f32, 1.0] {
-                draw_plane(
-                    vec3(side * (ROAD_HALF + 14.0), -0.05, zc),
-                    vec2(14.0, strip / 2.0),
-                    None,
-                    fog(GROUND, -zc),
-                );
-            }
-            z0 -= strip;
-        }
-
-        // Lane dashes scroll with travel; edge lines run solid.
-        let dash_phase = d_now % 3.0;
-        for lane_edge in [-LANE_W / 2.0 - LANE_W / 2.0, LANE_W / 2.0 + LANE_W / 2.0] {
-            // (edges between lanes sit at +-1.15 * 2 = lane half offsets)
-            let x = lane_edge / 2.0;
-            let mut z = 4.0 - dash_phase;
-            while z > -FAR {
-                // Dimmed so the cream road lines don't compete with the sun.
-                box_outlined(vec3(x, 0.012, z - 0.45), vec3(0.09, 0.02, 0.9), Color::new(0.34, 0.36, 0.40, 1.0));
-                z -= 3.0;
-            }
-        }
-        for side in [-1.0f32, 1.0] {
-            let mut z = 4.0;
-            while z > -FAR {
-                let seg = vec3(side * ROAD_HALF, 0.012, z - 2.0);
-                draw_cube(seg, vec3(0.07, 0.02, 4.0), None, fog(Color::new(0.28, 0.30, 0.34, 1.0), -seg.z));
-                z -= 4.0;
-            }
-        }
-
-        // The waveform runs along both road edges (the Cherry identity),
-        // brightened by treble.
+        // ---- the ribbon: one undulating triangle-strip mesh -----------------
+        // Its centreline is the SAME surface the avatar reads (so jumps lift the
+        // road, gaps dip it), rippled live by the waveform — the Cherry identity.
+        const RN: usize = 72;
         let wave = ctx.wave;
-        let segs = 44;
-        for side in [-1.0f32, 1.0] {
-            let mut prev: Option<Vec3> = None;
-            for i in 0..segs {
-                let f = i as f32 / (segs - 1) as f32;
-                let z = 2.0 - f * 58.0;
-                let si = ((f * (wave.len() - 1) as f32) as usize).min(wave.len() - 1);
-                let p = vec3(side * (ROAD_HALF + 1.1), 0.45 + wave[si] * 1.1, z);
-                if let Some(q) = prev {
-                    let c = fog(
-                        Color::new((teal().r + 0.35 * feat.treble).min(1.0), teal().g, teal().b, 0.9),
-                        -z,
-                    );
-                    draw_line_3d(q, p, c);
-                }
-                prev = Some(p);
+        let mut verts: Vec<Vertex> = Vec::with_capacity(RN * 3);
+        let mut idx: Vec<u16> = Vec::new();
+        let mut edges: Vec<(Vec3, Vec3)> = Vec::with_capacity(RN);
+        for i in 0..RN {
+            let f = i as f32 / (RN - 1) as f32;
+            let z = 2.0 - f * 70.0;
+            let d = d_now - z; // z = -(d - d_now)
+            let ripple = wave[(i * 3) % wave.len()] * 0.16 * (0.4 + feat.treble);
+            let h = self.surface_y(d) + ripple;
+            let load = prof.loudness_at(self.t_at_dist(d));
+            let col = fog(grade(0.08 + load * 0.5), -z);
+            for j in 0..3 {
+                let fj = j as f32 / 2.0;
+                let xo = (fj - 0.5) * 2.0 * ROAD_HALF;
+                let lift = (fj - 0.5).abs() * 0.5;
+                verts.push(Vertex::new(xo, h + lift, z, fj, f, col));
+            }
+            edges.push((vec3(-ROAD_HALF, h + 0.5, z), vec3(ROAD_HALF, h + 0.5, z)));
+        }
+        for i in 0..RN - 1 {
+            for j in 0..2u16 {
+                let a = (i * 3) as u16 + j;
+                let b = (i * 3) as u16 + j + 1;
+                let c = ((i + 1) * 3) as u16 + j + 1;
+                let dd = ((i + 1) * 3) as u16 + j;
+                idx.extend_from_slice(&[a, b, c, a, c, dd]);
             }
         }
-
-        // Portal pylons every 18 m pulse with bass (demoscene tunnel rhythm).
-        let portal_step = 18.0;
-        let first = (d_now / portal_step).floor() as i32;
-        for k in first..first + 6 {
-            let z = -(k as f32 * portal_step - d_now);
-            // Cull early on the near side: a frame half-past the camera fills
-            // the screen with a floating beam.
-            if z > -3.5 || z < -FAR {
-                continue;
-            }
-            let pulse = 0.55 + 0.45 * feat.bass;
-            let c = Color::new(0.24 + 0.10 * feat.bass, 0.23, 0.32, 1.0);
-            for side in [-1.0f32, 1.0] {
-                box_outlined(vec3(side * (ROAD_HALF + 0.9), 1.9, z), vec3(0.26, 3.8, 0.26), c);
-            }
-            box_outlined(
-                vec3(0.0, 3.95 + 0.22 * pulse, z),
-                vec3((ROAD_HALF + 1.0) * 2.0, 0.16 + 0.18 * pulse, 0.24),
-                c,
-            );
+        draw_mesh(&Mesh { vertices: verts, indices: idx, texture: None });
+        // Bright edge rails trace the ribbon for definition.
+        for i in 0..RN - 1 {
+            let z = 2.0 - i as f32 / (RN - 1) as f32 * 70.0;
+            let ec = fog(Color::new((teal().r + 0.3 * feat.treble).min(1.0), teal().g, teal().b, 1.0), -z);
+            draw_line_3d(edges[i].0, edges[i + 1].0, ec);
+            draw_line_3d(edges[i].1, edges[i + 1].1, ec);
         }
 
-        // City blocks breathe with the mids; their heights mix in the bands.
-        let row_step = 6.0;
-        let first_row = (d_now / row_step).floor() as i32;
-        for k in first_row..first_row + 14 {
-            let z = -(k as f32 * row_step - d_now);
+        // ---- typed obstacle glyphs welded onto the ribbon -------------------
+        for e in &self.course {
+            let z = -(e.d - d_now);
             if z > 2.0 || z < -FAR {
                 continue;
             }
-            for side in [-1i32, 1] {
-                let h0 = hash01(k * 2 + side);
-                if h0 < 0.22 {
-                    continue;
-                }
-                let band = feat.bands[(8 + (k * 7 + side * 3).rem_euclid(20)) as usize];
-                let h = (1.6 + h0 * h0 * 7.0) * (0.7 + 0.45 * feat.mid + 0.25 * band);
-                let x = side as f32 * (ROAD_HALF + 5.5 + hash01(k * 5 + side) * 7.0);
-                let w = 2.1 + hash01(k * 9 + side) * 2.0;
-                let shade = 0.16 + hash01(k * 11 + side) * 0.08;
-                box_outlined(
-                    vec3(x, h / 2.0, z),
-                    vec3(w, h, 2.6),
-                    Color::new(shade, shade * 1.05, shade * 1.35, 1.0),
-                );
+            let x = self.weave(e.d);
+            let base = self.surface_y(e.d);
+            let near = (1.0 - ((e.t - t).abs() / 0.18).min(1.0)).max(0.0);
+            let sn = ((e.strength - 1.3) / 2.7).clamp(0.0, 1.0);
+            let c = mix(grade(0.58 + sn * 0.4), amber(), near * 0.55);
+            match e.kind {
+                Kind::Block => draw_arch(x, base, z, 1.55, c),
+                Kind::Loop => draw_ring(x, 0.95 + base, z, 0.92, c, feat.treble),
+                Kind::Wave => draw_teeth(x, base, z, ROAD_HALF * 0.8, 0.22 + sn * 0.3, c),
+                Kind::Pit => draw_pit(x, base, z, ROAD_HALF * 0.7, c),
             }
-        }
-
-        // Trains (the swerve events). Windows glow with the mids.
-        let train_colors = [
-            Color::new(0.22, 0.30, 0.33, 1.0), // teal-slate
-            Color::new(0.16, 0.18, 0.22, 1.0), // slate
-            Color::new(0.26, 0.19, 0.14, 1.0), // ember
-        ];
-        for tr in &self.trains {
-            let z_front = -(tr.d - d_now);
-            if z_front - tr.len > 2.0 || z_front < -FAR {
-                continue;
+            // The strongest hits double up — a second small ring above the arch.
+            if e.double.is_some() && z < 2.0 {
+                draw_ring(x, base + 2.2, z, 0.45, mix(c, spec(), 0.3), feat.treble);
             }
-            let zc = z_front - tr.len / 2.0;
-            let body = train_colors[tr.hue];
-            box_outlined(vec3(tr.x, 1.3, zc), vec3(2.0, 2.6, tr.len), body);
-            box_outlined(
-                vec3(tr.x, 2.75, zc),
-                vec3(1.7, 0.3, tr.len * 0.92),
-                Color::new(body.r * 1.3, body.g * 1.3, body.b * 1.3, 1.0),
-            );
-            // Windows: a strip of lit panes, brightness from the mids.
-            let glow = 0.35 + 0.55 * feat.mid;
-            let n_win = (tr.len / 1.5) as i32;
-            for w in 0..n_win {
-                let wz = z_front - 0.8 - w as f32 * 1.5;
-                if wz < -FAR * 0.7 {
-                    break;
-                }
-                for side in [-1.0f32, 1.0] {
-                    draw_cube(
-                        vec3(tr.x + side * 1.02, 1.9, wz),
-                        vec3(0.04, 0.40, 0.65),
-                        None,
-                        fog(Color::new(0.95 * glow, 0.85 * glow, 0.55 * glow, 1.0), -wz),
-                    );
-                }
-            }
-        }
-
-        // Barriers (the jump events); they flash as their beat arrives.
-        for b in &self.barriers {
-            let z = -(b.d - d_now);
-            if z > 2.0 || z < -FAR {
-                continue;
-            }
-            // Barriers sit cool teal and only pulse warm on their exact beat, so
-            // the sun stays the single sustained warm hero.
-            let near = (1.0 - ((b.t - t).abs() / 0.18).min(1.0)).max(0.0);
-            let c = style::mix(Color::new(0.28, 0.40, 0.42, 1.0), amber(), near * 0.7);
-            for side in [-1.0f32, 1.0] {
-                box_outlined(vec3(b.x + side * 0.8, 0.42, z), vec3(0.13, 0.84, 0.13), c);
-            }
-            box_outlined(vec3(b.x, 0.72, z), vec3(1.75, 0.16, 0.12), c);
         }
 
         // Coins ahead, spinning faster as the treble sparkles.
@@ -579,15 +463,8 @@ impl Mode for Surfer {
             let e1 = vec3(a.cos() * r * 2.0, 0.0, a.sin() * r * 2.0);
             let e2 = vec3(0.0, r * 2.0, 0.0);
             let e3 = vec3(-a.sin() * 0.05, 0.0, a.cos() * 0.05);
-            let gold = fog(
-                Color::new(
-                    coin.r + 0.08 * feat.treble,
-                    coin.g + 0.10 * feat.treble,
-                    coin.b,
-                    1.0,
-                ),
-                -z,
-            );
+            let gold =
+                fog(Color::new(coin.r + 0.08 * feat.treble, coin.g + 0.10 * feat.treble, coin.b, 1.0), -z);
             let origin = vec3(c.x, c.y, z) - e1 / 2.0 - e2 / 2.0 - e3 / 2.0;
             draw_affine_parallelepiped(origin, e1, e2, e3, None, gold);
         }
@@ -596,42 +473,49 @@ impl Mode for Surfer {
         for s in &self.sparkles {
             let z = -(s.d - d_now);
             let k = (s.life / 0.5).clamp(0.0, 1.0);
-            draw_cube(
-                vec3(s.x, s.y, z),
-                vec3(0.07, 0.07, 0.07) * k,
-                None,
-                fog(Color::new(0.98, 0.85, 0.45, 1.0), -z),
-            );
+            draw_cube(vec3(s.x, s.y, z), vec3(0.07, 0.07, 0.07) * k, None, fog(Color::new(0.98, 0.85, 0.45, 1.0), -z));
         }
 
-        // Player: a small cherry-red runner. Lean = banking, bob = run phase.
-        let phase = d_now * 2.2;
-        let bob = if py <= 0.0 { (phase * std::f32::consts::PI).sin().abs() * 0.06 } else { 0.0 };
-        let base = py + bob;
-        let lean = bank * 1.4;
-        // Shadow grounds the player.
-        draw_plane(
-            vec3(px, 0.015, 0.0),
-            vec2(0.42 * (1.0 - py / 4.0), 0.3),
-            None,
-            Color::new(0.0, 0.0, 0.0, 0.35),
-        );
-        // Legs (alternating while grounded, tucked in the air).
-        let leg = Color::new(0.16, 0.17, 0.22, 1.0);
-        if py <= 0.0 {
-            let s0 = (phase * std::f32::consts::PI * 2.0).sin();
-            box_outlined(vec3(px - 0.12, base + 0.22 + s0.max(0.0) * 0.08, 0.05 * s0), vec3(0.14, 0.44, 0.16), leg);
-            box_outlined(vec3(px + 0.12, base + 0.22 + (-s0).max(0.0) * 0.08, -0.05 * s0), vec3(0.14, 0.44, 0.16), leg);
-        } else {
-            box_outlined(vec3(px - 0.12, base + 0.30, 0.06), vec3(0.14, 0.30, 0.16), leg);
-            box_outlined(vec3(px + 0.12, base + 0.30, -0.02), vec3(0.14, 0.30, 0.16), leg);
+        // ---- the avatar: a low-poly runner that jumps / spins / rolls -------
+        // Pose is a pure function of the obstacle it's clearing.
+        let mut spin_a = 0.0f32;
+        let mut roll_a = 0.0f32;
+        let mut squash = 1.0f32;
+        let mut leg = 1.0f32;
+        if let Some((e, k)) = self.active_event(d_now) {
+            let ss = k * k * (3.0 - 2.0 * k);
+            let bump = (k * std::f32::consts::PI).sin();
+            let mut apply = |kind: Kind| match kind {
+                Kind::Loop => spin_a += std::f32::consts::TAU * ss,
+                Kind::Wave => {
+                    roll_a += std::f32::consts::TAU * ss;
+                    squash *= 1.0 - 0.4 * bump;
+                }
+                Kind::Pit => leg *= 1.0 + bump,
+                Kind::Block => {}
+            };
+            apply(e.kind);
+            if let Some(d2) = e.double {
+                apply(d2);
+            }
         }
-        // Torso + head, leaning into the swerve.
-        box_outlined(vec3(px + lean * 0.10, base + 0.74, 0.0), vec3(0.46, 0.58, 0.30), PLAYER_BODY);
-        box_outlined(vec3(px + lean * 0.22, base + 1.20, 0.0), vec3(0.27, 0.27, 0.27), PLAYER_SKIN);
+        let grounded = py <= 0.05 && spin_a == 0.0 && roll_a == 0.0;
+        let run = (d_now * 2.2 * std::f32::consts::PI).sin();
+        let bob = if grounded { run.abs() * 0.05 } else { 0.0 };
+        let pivot = vec3(px, py + bob + 0.62, 0.0);
 
-        // Vignette over the composited 3D frame, drawn in 2D into the same
-        // target so play and export match the other modes.
+        // Shadow grounds the runner.
+        draw_plane(vec3(px, 0.015, 0.0), vec2(0.40 * (1.0 - (py / 4.0).min(0.8)), 0.3), None, Color::new(0.0, 0.0, 0.0, 0.34));
+        // Legs (swing while running, elongate over a gap).
+        let legc = Color::new(0.16, 0.17, 0.22, 1.0);
+        let swing = if grounded { run * 0.12 } else { 0.0 };
+        part(pivot, vec3(-0.11, -0.42 * leg, swing), vec3(0.07, 0.22 * leg, 0.08), spin_a, roll_a, legc);
+        part(pivot, vec3(0.11, -0.42 * leg, -swing), vec3(0.07, 0.22 * leg, 0.08), spin_a, roll_a, legc);
+        // Torso + head.
+        part(pivot, vec3(0.0, 0.0, 0.0), vec3(0.22, 0.30 * squash, 0.16), spin_a, roll_a, PLAYER_BODY);
+        part(pivot, vec3(0.0, 0.42 * squash, 0.0), vec3(0.14, 0.14, 0.14), spin_a, roll_a, PLAYER_SKIN);
+
+        // Vignette over the composited 3D frame.
         view::apply_screen_camera();
         style::finish();
         set_default_camera();

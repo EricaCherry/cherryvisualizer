@@ -6,6 +6,7 @@
 //! here + one line in `main.rs`.
 
 pub mod breakout;
+pub mod course;
 pub mod nebula;
 pub mod radial;
 pub mod railshooter;

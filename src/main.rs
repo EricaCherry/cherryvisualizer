@@ -429,7 +429,8 @@ async fn main() {
 
         // ---- headless CLI: one-shot PNG of a single frame (dev orientation) --
         if args.export_frame.is_some() {
-            let img = export::render_preview(export_settings, make_mode(sel), audio.track(), 300);
+            let frame = std::env::var("CHERRY_FRAME").ok().and_then(|s| s.parse().ok()).unwrap_or(300);
+            let img = export::render_preview(export_settings, make_mode(sel), audio.track(), frame);
             img.export_png("export-frame.png");
             println!("wrote export-frame.png ({}x{})", img.width, img.height);
             std::process::exit(0);
