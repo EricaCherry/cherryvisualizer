@@ -248,6 +248,7 @@ struct UiData {
     fps: i32,
     modes: Vec<(&'static str, &'static str, Category)>,
     sel: usize,
+    active: bool,
     params: Vec<Param>,
     themes: Vec<&'static str>,
     theme: usize,
@@ -322,6 +323,13 @@ async fn main() {
     }
     for m in modes.iter_mut() {
         m.reset(audio.track());
+    }
+
+    // Interactive launch starts BLANK — no mode runs until the user picks one,
+    // opens a file, or hits play. CLI render paths and a --file launch are active.
+    let mut active = headless || cli_export || args.file.is_some();
+    if !active {
+        audio.set_paused(true);
     }
 
     if let Some(th) = args.theme {
@@ -469,6 +477,7 @@ async fn main() {
                         m.reset(audio.track());
                     }
                     last_t = 0.0;
+                    active = true; // opening a file starts the visualizer
                     if let Some(p) = postfx.as_mut() {
                         p.reset();
                     }
@@ -539,6 +548,7 @@ async fn main() {
                 fps: (1.0 / dt.max(1e-4)) as i32,
                 modes: modes.iter().map(|m| (m.name(), m.about(), m.category())).collect(),
                 sel,
+                active,
                 params: modes[sel].params(),
                 themes: style::theme_names(),
                 theme: style::current_theme(),
@@ -565,7 +575,7 @@ async fn main() {
                     actions.push(Action::RestartMode);
                 }
                 if is_key_pressed(KeyCode::Tab) {
-                    actions.push(Action::SelectMode((sel + 1) % modes.len()));
+                    actions.push(Action::SelectMode(if active { (sel + 1) % modes.len() } else { sel }));
                 }
             }
 
@@ -585,13 +595,17 @@ async fn main() {
                     Action::ShowAbout => ui.about_open = true,
                     Action::SelectMode(i) => {
                         sel = i;
+                        active = true;
                         modes[sel].reset(audio.track());
                         if let Some(p) = postfx.as_mut() {
                             p.reset();
                         }
                     }
                     Action::SetParam(name, v) => modes[sel].set_param(name, v),
-                    Action::TogglePause => audio.toggle_pause(),
+                    Action::TogglePause => {
+                        active = true; // play also starts the visualizer on a blank launch
+                        audio.toggle_pause();
+                    }
                     Action::Seek(t) => {
                         audio.seek(t);
                         last_t = t;
@@ -668,7 +682,7 @@ async fn main() {
                     );
                 }
             }
-        } else {
+        } else if active {
             audio.tick(dt);
             let t = audio.position();
             // Rewind guard stays at the call site (it resets the mode on loop).
@@ -696,6 +710,10 @@ async fn main() {
                 }
                 postfx.as_mut().unwrap().render(&*modes[sel], &ctx, None);
             }
+        } else {
+            // Blank startup — just the chrome over a dark canvas until a mode runs.
+            set_default_camera();
+            clear_background(style::ink());
         }
 
         // ---- paint UI on top, or capture a headless shot ------------------
@@ -918,7 +936,7 @@ fn tab_modes(ui: &mut egui::Ui, data: &UiData, actions: &mut Vec<Action>) {
             let resp = ui.add(
                 egui::Button::new(egui::RichText::new(*name).strong())
                     .min_size(egui::vec2(ui.available_width(), 0.0))
-                    .selected(i == data.sel),
+                    .selected(i == data.sel && data.active),
             );
             if resp.clicked() {
                 actions.push(Action::SelectMode(i));
