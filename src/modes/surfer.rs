@@ -46,6 +46,10 @@ const TRAIN_STRENGTH: f32 = 2.0;
 const TRAIN_MIN_GAP: f32 = 2.5;
 const SWITCH_LEAD: f32 = 0.5;
 const SWITCH_DUR: f32 = 0.35;
+// Jumps only on prominent, WELL-SPACED beats — the gap exceeds the airtime so
+// jump windows can never overlap (which caused the erratic mid-air snapping).
+const BARRIER_STRENGTH: f32 = 1.7;
+const BARRIER_MIN_GAP: f32 = 0.85;
 
 // Palette — re-keyed to the shared "Dusk Encom" master palette so Surfer reads
 // as the same film as the 2D modes (dusk, flat, no neon).
@@ -226,6 +230,7 @@ impl Mode for Surfer {
         self.barriers.clear();
         let mut lane = 0i32;
         let mut last_train = -10.0f32;
+        let mut last_barrier = -10.0f32;
         for (i, b) in p.beats.iter().enumerate() {
             if b.t < 1.2 || b.t > track.duration() - 1.0 {
                 continue;
@@ -251,13 +256,15 @@ impl Mode for Surfer {
                 });
                 lane += dir;
                 last_train = b.t;
-            } else {
-                // A barrier in the player's lane at this moment; jump it.
-                self.barriers.push(Barrier {
-                    t: b.t,
-                    d: self.dist_at(b.t),
-                    x: self.lane_x_at(b.t),
-                });
+            } else if b.strength >= BARRIER_STRENGTH
+                && b.t - last_barrier > BARRIER_MIN_GAP
+                && b.t - last_train > 0.6
+            {
+                // A hurdle to jump — only on a prominent beat, and far enough from
+                // the last jump that the airtime windows can't overlap (and not
+                // right on top of a lane swerve).
+                self.barriers.push(Barrier { t: b.t, d: self.dist_at(b.t), x: self.lane_x_at(b.t) });
+                last_barrier = b.t;
             }
         }
 
