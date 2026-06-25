@@ -33,8 +33,6 @@ const MIN_GAP_M: f32 = 9.0; // > 2*ARC_M, so obstacle windows are disjoint
 // Palette — keyed to the shared "Dusk Encom" master palette so Surfer reads as
 // the same film as the 2D modes (dusk, flat, no neon).
 const HORIZON: Color = Color::new(0.115, 0.10, 0.105, 1.0);
-const PLAYER_BODY: Color = Color::new(0.80, 0.27, 0.30, 1.0); // cherry red — the hero
-const PLAYER_SKIN: Color = Color::new(0.88, 0.78, 0.66, 1.0);
 
 struct CoinSpot {
     t: f32,
@@ -169,15 +167,55 @@ fn seg3d(a: Vec3, b: Vec3, thick: f32, c: Color) {
     draw_affine_parallelepiped(origin, ex, ey, ez, None, fog(c, -(a.z + b.z) * 0.5));
 }
 
-/// One oriented box of the avatar, offset `lo` from the body pivot and rotated
-/// with it (so the whole figure can spin or roll as one).
-fn part(pivot: Vec3, lo: Vec3, half: Vec3, spin: f32, roll: f32, c: Color) {
-    let pc = pivot + rotv(lo, spin, roll);
-    let ex = rotv(vec3(half.x * 2.0, 0.0, 0.0), spin, roll);
-    let ey = rotv(vec3(0.0, half.y * 2.0, 0.0), spin, roll);
-    let ez = rotv(vec3(0.0, 0.0, half.z * 2.0), spin, roll);
-    let origin = pc - ex * 0.5 - ey * 0.5 - ez * 0.5;
-    draw_affine_parallelepiped(origin, ex, ey, ez, None, fog(c, -pc.z));
+/// A minimal Vib-Ribbon-style vector creature (a line-art bunny) drawn from bold
+/// 3D segments. The whole figure rotates as one (`spin` about forward, `roll`
+/// about lateral) and squashes / stretches its legs, so it morphs through each
+/// obstacle. Local coords: x right, y up, z toward the camera; origin at the
+/// body centre, placed at `pivot`.
+fn draw_creature(pivot: Vec3, spin: f32, roll: f32, squash: f32, leg: f32, run: f32, grounded: bool, c: Color) {
+    let s = 1.5;
+    let th = 0.085;
+    let poly = |pts: &[Vec3]| {
+        for w in pts.windows(2) {
+            seg3d(pivot + rotv(w[0] * s, spin, roll), pivot + rotv(w[1] * s, spin, roll), th, c);
+        }
+    };
+    // Body: an egg outline, wider at the bottom, squashed on a roll.
+    let (bw, bh) = (0.28, 0.40 * squash);
+    let mut body = Vec::with_capacity(17);
+    for i in 0..=16 {
+        let a = i as f32 / 16.0 * std::f32::consts::TAU;
+        let r = 1.0 - 0.12 * a.cos();
+        body.push(vec3(a.sin() * bw * r, -0.05 + a.cos() * bh, 0.0));
+    }
+    poly(&body);
+    // Head circle on top.
+    let hr = 0.16 * squash;
+    let hy = bh * 0.92 + 0.12;
+    let mut head = Vec::with_capacity(13);
+    for i in 0..=12 {
+        let a = i as f32 / 12.0 * std::f32::consts::TAU;
+        head.push(vec3(a.sin() * hr, hy + a.cos() * hr, 0.0));
+    }
+    poly(&head);
+    // Two long ears.
+    for side in [-1.0f32, 1.0] {
+        poly(&[
+            vec3(side * hr * 0.5, hy + hr * 0.5, 0.0),
+            vec3(side * hr * 0.95, hy + hr * 1.8, 0.0),
+            vec3(side * hr * 0.7, hy + hr * 3.1, 0.0),
+        ]);
+    }
+    // Two feet from the body bottom — they swing while running, elongate over a gap.
+    let by = -0.05 - bh;
+    for (i, side) in [-1.0f32, 1.0].into_iter().enumerate() {
+        let sw = if grounded { run * 0.12 * if i == 0 { 1.0 } else { -1.0 } } else { 0.0 };
+        poly(&[
+            vec3(side * bw * 0.5, by, 0.0),
+            vec3(side * bw * 0.55, by - 0.20 * leg, sw),
+            vec3(side * bw * 0.95, by - 0.22 * leg, sw + 0.06),
+        ]);
+    }
 }
 
 // ---- obstacle glyphs (all built from bold segments, no plain cubes) ---------
@@ -537,18 +575,16 @@ impl Mode for Surfer {
         let grounded = py <= 0.05 && spin_a == 0.0 && roll_a == 0.0;
         let run = (d_now * 2.2 * std::f32::consts::PI).sin();
         let bob = if grounded { run.abs() * 0.05 } else { 0.0 };
-        let pivot = vec3(px, py + bob + 0.62, 0.0);
+        let pivot = vec3(px, py + bob + 0.95, 0.0);
 
-        // Shadow grounds the runner.
-        draw_plane(vec3(px, 0.015, 0.0), vec2(0.40 * (1.0 - (py / 4.0).min(0.8)), 0.3), None, Color::new(0.0, 0.0, 0.0, 0.34));
-        // Legs (swing while running, elongate over a gap).
-        let legc = Color::new(0.16, 0.17, 0.22, 1.0);
-        let swing = if grounded { run * 0.12 } else { 0.0 };
-        part(pivot, vec3(-0.11, -0.42 * leg, swing), vec3(0.07, 0.22 * leg, 0.08), spin_a, roll_a, legc);
-        part(pivot, vec3(0.11, -0.42 * leg, -swing), vec3(0.07, 0.22 * leg, 0.08), spin_a, roll_a, legc);
-        // Torso + head.
-        part(pivot, vec3(0.0, 0.0, 0.0), vec3(0.22, 0.30 * squash, 0.16), spin_a, roll_a, PLAYER_BODY);
-        part(pivot, vec3(0.0, 0.42 * squash, 0.0), vec3(0.14, 0.14, 0.14), spin_a, roll_a, PLAYER_SKIN);
+        // Shadow grounds the creature.
+        draw_plane(vec3(px, 0.015, 0.0), vec2(0.34 * (1.0 - (py / 4.0).min(0.8)), 0.26), None, Color::new(0.0, 0.0, 0.0, 0.32));
+        // A minimal Vib-Ribbon-style line-art creature that morphs as it clears
+        // each obstacle: tucking, stretching its legs over a gap, spinning through
+        // a ring, rolling over teeth.
+        let beat = feat.beat.unwrap_or(0.0);
+        let creature_c = mix(amber(), spec(), 0.45 + 0.25 * beat.min(1.0));
+        draw_creature(pivot, spin_a, roll_a, squash, leg, run, grounded, creature_c);
 
         // Vignette over the composited 3D frame.
         view::apply_screen_camera();
