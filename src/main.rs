@@ -859,7 +859,7 @@ fn build_ui(ctx: &egui::Context, data: &UiData, ui: &mut UiState, actions: &mut 
             )
             .show(ctx, |s| {
                 s.add_space(4.0);
-                s.horizontal_wrapped(|tabs| {
+                s.horizontal(|tabs| {
                     for (label, tab) in [
                         ("Modes", Tab::Modes),
                         ("Settings", Tab::Settings),
@@ -870,6 +870,11 @@ fn build_ui(ctx: &egui::Context, data: &UiData, ui: &mut UiState, actions: &mut 
                             ui.tab = tab;
                         }
                     }
+                    tabs.with_layout(egui::Layout::right_to_left(egui::Align::Center), |r| {
+                        if r.button("«").on_hover_text("Hide sidebar").clicked() {
+                            ui.sidebar = false;
+                        }
+                    });
                 });
                 s.separator();
                 egui::ScrollArea::vertical().show(s, |s| match ui.tab {
@@ -878,6 +883,15 @@ fn build_ui(ctx: &egui::Context, data: &UiData, ui: &mut UiState, actions: &mut 
                     Tab::Library => tab_library(s, data, actions),
                     Tab::Export => tab_export(s, ui, data, actions),
                 });
+            });
+    } else {
+        // Collapsed — a small floating button to bring the sidebar back.
+        egui::Area::new(egui::Id::new("sidebar_expand"))
+            .anchor(egui::Align2::LEFT_TOP, egui::vec2(6.0, 34.0))
+            .show(ctx, |a| {
+                if a.button("»").on_hover_text("Show sidebar").clicked() {
+                    ui.sidebar = true;
+                }
             });
     }
 

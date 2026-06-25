@@ -83,6 +83,7 @@ pub struct Breakout {
 
     // live-tunable settings (see params()/set_param())
     ball_speed: f32,
+    ball_size: f32,
     paddle_amp: f32,
     brick_fill: f32,
     court: f32,
@@ -177,6 +178,7 @@ impl Breakout {
             bricks: Vec::new(),
             total_bricks: 0,
             ball_speed: DEF_BALL_SPEED,
+            ball_size: 1.0,
             paddle_amp: DEF_PADDLE_AMP,
             brick_fill: DEF_BRICK_FILL,
             court: DEF_COURT,
@@ -310,8 +312,8 @@ impl Breakout {
         // Normalize by the curve's RMS (not its peak) so the TYPICAL swing fills
         // the amplitude — a peaky curve would otherwise read as mostly flat.
         let rms_pts = (pts.iter().map(|x| x * x).sum::<f32>() / WAVE_PTS as f32).sqrt().max(0.004);
-        let amp = self.paddle_amp * (0.55 + rms * 0.6) / rms_pts;
-        let base = PADDLE_BASE_Y + 0.85;
+        let amp = self.paddle_amp * (0.95 + rms * 1.1) / rms_pts;
+        let base = PADDLE_BASE_Y + 1.05;
         let st = (dt * 7.0).min(1.0);
         let mut moved = 0.0f32;
         for i in 0..WAVE_PTS {
@@ -346,6 +348,7 @@ impl Mode for Breakout {
     fn params(&self) -> Vec<Param> {
         vec![
             Param::float("Ball speed", self.ball_speed, 1.5, 9.0),
+            Param::float("Ball size", self.ball_size, 0.5, 2.5),
             Param::float("Wave height", self.paddle_amp, 0.3, 3.5),
             Param::float("Block size", self.brick_fill, 0.3, 0.95),
             Param::float("Court height", self.court, 5.5, 8.4),
@@ -357,6 +360,12 @@ impl Mode for Breakout {
     fn set_param(&mut self, name: &str, v: f32) {
         match name {
             "Ball speed" => self.ball_speed = v,
+            "Ball size" => {
+                self.ball_size = v;
+                if let Some(c) = self.colliders.get_mut(self.ball_collider) {
+                    c.set_shape(SharedShape::ball(BALL_R * v));
+                }
+            }
             "Wave height" => self.paddle_amp = v,
             "Block size" => {
                 self.brick_fill = v;
@@ -582,6 +591,6 @@ impl Mode for Breakout {
 
         // Ball: the single hero.
         let pos = self.bodies[self.ball].translation();
-        style::glow_core(&v, pos.x, pos.y, BALL_R, amber());
+        style::glow_core(&v, pos.x, pos.y, BALL_R * self.ball_size, amber());
     }
 }
