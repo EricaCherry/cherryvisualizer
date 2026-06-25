@@ -339,8 +339,6 @@ impl Mode for Surfer {
 
         // ================= 2D backdrop (drawn before the 3D pass) ============
         view::apply_screen_camera();
-        let bg = style::draw_background(1.0);
-        if !bg {
         clear_background(sky_top);
         let (sw, sh) = (view::screen_w(), view::screen_h());
         let horizon_y = sh * 0.52;
@@ -376,7 +374,6 @@ impl Mode for Surfer {
             draw_rectangle(i as f32 * bw, horizon_y - h, bw * 0.92, h, Color::new(0.11, 0.09, 0.14, 1.0));
         }
         draw_rectangle(0.0, horizon_y, sw, sh - horizon_y, HORIZON);
-        }
 
         // ================= 3D pass ===========================================
         let fov = (58.0 + feat.rms * 9.0 + self.cam_kick * 14.0).to_radians();

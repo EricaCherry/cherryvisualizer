@@ -131,14 +131,6 @@ lit surfaces too, and the material renders identically through the offscreen vid
 exporter. (macroquad hands a custom material only `Model`+`Projection`, so there's no
 view matrix — lighting is done in world space with the camera passed as a uniform.)
 
-## Background image
-
-**File ▸ Background image…** sets any image (png/jpg/…) as the backdrop. For the 2D
-modes it sits under the visualizer (behind the feedback trails); for the 3D modes it
-becomes the sky behind the lit world. **Settings ▸ Background** picks the fit
-(cover / contain / stretch) and a dim level, and it survives theme switches and is
-baked into video exports.
-
 ## Run it
 
 ```
