@@ -16,6 +16,7 @@
 
 use macroquad::prelude::*;
 
+use crate::material3d;
 use crate::modes::course::{Kind, build_course};
 use crate::modes::{Category, FrameCtx, Mode, Param};
 use crate::style::{self, amber, amber_glow, hash01, ink, mix, slate, spec, teal, teal_deep, with_alpha};
@@ -98,12 +99,6 @@ pub struct RailShooter {
     prev_dead: usize,
     cam_kick: f32,
     flash: f32,
-    // surfacing: 0 = flat, 1 = procedural (.kkrieger) sci-fi panels. The panel
-    // is baked NEUTRAL grey and tinted by the theme at draw time, so it needs no
-    // rebake on a theme switch (and no on-disk assets — Kenney's "prototype"
-    // textures are literally labeled placeholders, so procedural won the bake-off).
-    tex_mode: u32,
-    proc_panel: Option<Texture2D>,
     // live-tunable
     p_fire: f32,
     p_density: f32,
@@ -127,8 +122,6 @@ impl RailShooter {
             prev_dead: 0,
             cam_kick: 0.0,
             flash: 0.0,
-            tex_mode: 1,
-            proc_panel: None,
             p_fire: 1.0,
             p_density: 1.0,
             p_roll: 1.0,
@@ -165,44 +158,6 @@ impl RailShooter {
         std::f32::consts::TAU * (k * k * (3.0 - 2.0 * k)) // smoothstep -> one clean spin
     }
 
-    fn surface_tex(&self) -> Option<&Texture2D> {
-        match self.tex_mode {
-            1 => self.proc_panel.as_ref(),
-            _ => None,
-        }
-    }
-}
-
-/// A neutral-grey .kkrieger-style sci-fi panel: grid cells with recessed seams,
-/// corner rivets and a fine tooth of noise. Baked neutral so the theme tints it
-/// via the draw color arg.
-fn build_panel() -> Texture2D {
-    let n = 256usize;
-    let cell = 32usize;
-    let mut buf = vec![0u8; n * n * 4];
-    for y in 0..n {
-        for x in 0..n {
-            let (cx, cy) = ((x / cell) as i32, (y / cell) as i32);
-            let mut v = 0.42 + hash01(cx * 131 + cy * 977) * 0.22; // per-panel brightness
-            if x % cell < 2 || y % cell < 2 {
-                v *= 0.5; // recessed seam
-            }
-            let (rx, ry) = ((x % cell) as i32 - 5, (y % cell) as i32 - 5);
-            if rx * rx + ry * ry < 5 {
-                v = 0.9; // corner rivet
-            }
-            v *= 0.92 + 0.08 * hash01((x * 7 + y * 13) as i32); // fine tooth
-            let b = (v.clamp(0.0, 1.0) * 255.0) as u8;
-            let o = (y * n + x) * 4;
-            buf[o] = b;
-            buf[o + 1] = b;
-            buf[o + 2] = b;
-            buf[o + 3] = 255;
-        }
-    }
-    let tex = Texture2D::from_rgba8(n as u16, n as u16, &buf);
-    tex.set_filter(FilterMode::Nearest);
-    tex
 }
 
 /// Distance fog toward a theme-derived deep-space horizon (exp-squared, soft).
@@ -282,7 +237,6 @@ impl Mode for RailShooter {
             Param::float("Enemy density", self.p_density, 0.3, 2.0),
             Param::float("Roll", self.p_roll, 0.0, 2.0),
             Param::int("Reticle", self.p_reticle as i32, 0, 1),
-            Param::int("Panels", self.tex_mode as i32, 0, 1),
         ]
     }
 
@@ -292,7 +246,6 @@ impl Mode for RailShooter {
             "Enemy density" => self.p_density = v,
             "Roll" => self.p_roll = v,
             "Reticle" => self.p_reticle = v,
-            "Panels" => self.tex_mode = (v.round() as u32).min(1),
             _ => {}
         }
     }
@@ -374,9 +327,6 @@ impl Mode for RailShooter {
         self.prev_dead = 0;
         self.cam_kick = 0.0;
         self.flash = 0.0;
-        if self.proc_panel.is_none() {
-            self.proc_panel = Some(build_panel());
-        }
     }
 
     fn update(&mut self, ctx: &FrameCtx) {
@@ -472,8 +422,9 @@ impl Mode for RailShooter {
         // ================= 3D pass ===========================================
         let fov = (60.0 + feat.rms * 10.0 + self.cam_kick * 14.0).to_radians();
         let up = vec3((roll + bank).sin(), (roll + bank).cos(), 0.0).normalize();
+        let cam_pos = vec3(px * 0.7, 2.3 + self.cam_kick * 0.12, 5.4);
         set_camera(&Camera3D {
-            position: vec3(px * 0.7, 2.3 + self.cam_kick * 0.12, 5.4),
+            position: cam_pos,
             target: vec3(px * 0.85, 1.05, -8.0),
             up,
             fovy: fov,
@@ -482,28 +433,58 @@ impl Mode for RailShooter {
             ..Default::default()
         });
 
-        // Corridor floor (depth strips so the fog takes it) + breathing walls.
-        // The panel texture (if any) tiles for free — one textured face per
-        // segment, tinted by the theme color.
+        // Corridor floor + breathing walls — explicit meshes carrying real
+        // normals, drawn through the PBR panel material (greeble normal map, lit
+        // and fogged in-shader). UVs bake in the tiling so one draw covers the
+        // whole run; the wall height breathes with the bass.
         let floor_c = mix(teal_deep(), teal(), 0.18);
         let wall_c = mix(slate(), teal_deep(), 0.3);
         let wall_h = 4.0 * (0.7 + 0.5 * feat.bass);
-        let tex = self.surface_tex();
-        let strip = 7.0;
-        let mut z0 = 6.0;
-        while z0 > -FAR {
-            let zc = z0 - strip * 0.5;
-            draw_plane(vec3(0.0, -0.6, zc), vec2(ROAD_HALF, strip * 0.5), tex, fog(floor_c, -zc));
-            for side in [-1.0f32, 1.0] {
-                let wc = vec3(side * (ROAD_HALF + 0.3), wall_h * 0.5 - 0.6, zc);
-                let ws = vec3(0.4, wall_h, strip * 0.5);
-                draw_cube(wc, ws, tex, fog(wall_c, -zc));
-                if -zc < FAR * 0.55 {
-                    draw_cube_wires(wc, ws * 1.01, fog(Color::new(wall_c.r * 0.5, wall_c.g * 0.5, wall_c.b * 0.5, 1.0), -zc));
-                }
+        let (zn, zf) = (6.0f32, -FAR);
+        let vz = 0.12; // along-corridor tiling rate
+        let mut cv: Vec<Vertex> = Vec::with_capacity(12);
+        let mut ci: Vec<u16> = Vec::new();
+        let mut quad = |c: [Vec3; 4], uv: [(f32, f32); 4], nrm: Vec3, col: Color| {
+            let b = cv.len() as u16;
+            for k in 0..4 {
+                let mut v = Vertex::new(c[k].x, c[k].y, c[k].z, uv[k].0, uv[k].1, col);
+                v.normal = vec4(nrm.x, nrm.y, nrm.z, 0.0);
+                cv.push(v);
             }
-            z0 -= strip;
+            ci.extend_from_slice(&[b, b + 1, b + 2, b, b + 2, b + 3]);
+        };
+        quad(
+            [vec3(-ROAD_HALF, -0.6, zn), vec3(ROAD_HALF, -0.6, zn), vec3(ROAD_HALF, -0.6, zf), vec3(-ROAD_HALF, -0.6, zf)],
+            [(0.0, -zn * vz), (3.0, -zn * vz), (3.0, -zf * vz), (0.0, -zf * vz)],
+            vec3(0.0, 1.0, 0.0),
+            floor_c,
+        );
+        for side in [-1.0f32, 1.0] {
+            let xw = side * (ROAD_HALF + 0.05);
+            let (yb, yt) = (-0.6, wall_h - 0.6);
+            quad(
+                [vec3(xw, yb, zn), vec3(xw, yt, zn), vec3(xw, yt, zf), vec3(xw, yb, zf)],
+                [(0.0, -zn * vz), (1.5, -zn * vz), (1.5, -zf * vz), (0.0, -zf * vz)],
+                vec3(-side, 0.0, 0.0),
+                wall_c,
+            );
         }
+        material3d::bind(
+            material3d::Surface::Panel,
+            &material3d::LitParams {
+                cam: cam_pos,
+                light_dir: vec3(-0.3, -0.7, -0.5),
+                light_color: { let c = mix(teal(), spec(), 0.6); vec3(c.r, c.g, c.b) * 1.3 },
+                ambient: { let s = mix(slate(), teal_deep(), 0.4); vec3(s.r, s.g, s.b) * 0.95 },
+                horizon: mix(ink(), slate(), 0.7),
+                metal: 0.6,
+                rough: 0.9,
+                tile: vec2(1.0, 1.0),
+                pulse: feat.bass * 0.5 + feat.beat.unwrap_or(0.0) * 0.4,
+            },
+        );
+        draw_mesh(&Mesh { vertices: cv, indices: ci, texture: None });
+        material3d::unbind();
 
         // Asteroid scenery (mid-band), tumbling at the sides.
         for r in &self.rocks {
