@@ -101,7 +101,9 @@ itself is a single undulating **ribbon** whose surface *is* that obstacle height
 field — a jump arch lifts the road, a gap dips it — rippled live by the waveform
 and graded by loudness. The runner jumps, spins, rolls and strides exactly as
 the obstacle it's clearing demands, and coins ride the same surface so each is
-collected on the music. Flat low-poly, hand-rolled fog — no textures, no shaders.
+collected on the music. The ribbon is shaded by a **custom PBR material**
+(see *The 3D look* below) — a brushed, normal-mapped metal surface that catches a
+warm key light and throbs on the beat.
 
 **Rail Shooter** — a StarFox-style on-rails flight the music flies, built on the
 **same course generator**. Each typed event becomes a **wave** of angular wedge
@@ -110,10 +112,32 @@ Arwing's twin lasers are fired *early* by their exact travel time — **laser
 lead** — so the tracer strikes on the beat and the fighter bursts into debris.
 Because a whole volley shares one beat, the wave reads as a musical phrase rather
 than a spray. The open, melodic events flow **checkpoint rings**, the strongest
-double-hits snap a **barrel roll**, bass breathes the canyon, and the corridor is
-surfaced with **procedurally generated** `.kkrieger`-style sci-fi panels (grid,
-seams, rivets — baked neutral and tinted by the theme, so zero assets and it
-re-skins with the palette).
+double-hits snap a **barrel roll**, bass breathes the canyon, and the corridor
+floor and walls are lit, **normal-mapped** `.kkrieger`-style sci-fi panels (the
+same PBR material — grid, seams, rivets baked procedurally, tinted by the theme,
+so zero assets and it re-skins with the palette).
+
+## The 3D look
+
+The two 3D modes are lit by a small **custom PBR material** (`src/material3d.rs`)
+written straight against macroquad's shader path — a world-space metallic-roughness
+model (Cook-Torrance GGX + a fresnel rim + a beat-driven emissive) with
+**procedurally-baked normal + roughness/metalness maps** (no image assets: a noise
+height-field is Sobel'd into a normal map at load). The Surfer ribbon and the Rail
+corridor carry real per-vertex world normals so the bump map has a frame to perturb;
+everything is lit and distance-fogged in one shader pass. The maps are baked neutral
+and tinted in-shader by the theme-graded vertex color, so a theme switch re-skins the
+lit surfaces too, and the material renders identically through the offscreen video
+exporter. (macroquad hands a custom material only `Model`+`Projection`, so there's no
+view matrix — lighting is done in world space with the camera passed as a uniform.)
+
+## Background image
+
+**File ▸ Background image…** sets any image (png/jpg/…) as the backdrop. For the 2D
+modes it sits under the visualizer (behind the feedback trails); for the 3D modes it
+becomes the sky behind the lit world. **Settings ▸ Background** picks the fit
+(cover / contain / stretch) and a dim level, and it survives theme switches and is
+baked into video exports.
 
 ## Run it
 
@@ -163,6 +187,7 @@ src/
   style.rs         the shared art direction: themes/palette, energy->color
                    grade, graded backdrop, vignette finish
   postfx.rs        the "alive" feedback pipeline (decaying echo trails)
+  material3d.rs    custom PBR material + procedural normal/material maps (3D modes)
   export.rs        offscreen render -> raw frames -> ffmpeg -> MP4 (+ audio mux)
   modes/
     mod.rs         the Mode trait + the Param settings system
