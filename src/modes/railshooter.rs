@@ -16,6 +16,7 @@
 
 use macroquad::prelude::*;
 
+use crate::modes::course::{Kind, build_course};
 use crate::modes::{Category, FrameCtx, Mode, Param};
 use crate::style::{self, amber, amber_glow, hash01, ink, mix, slate, spec, teal, teal_deep, with_alpha};
 use crate::track::Track;
@@ -27,10 +28,8 @@ const ROAD_HALF: f32 = 4.4; // corridor half-width
 const FAR: f32 = 92.0;
 const LEAD: f32 = 0.36; // laser flight time: fire this early so it hits on the beat
 const KILL_AHEAD: f32 = 11.0; // enemies die this far in front of the ship
-const RING_GAP_M: f32 = 26.0;
 const ROLL_DUR: f32 = 0.72;
-const ENEMY_MIN_GAP: f32 = 0.34;
-const ENEMY_STRENGTH: f32 = 1.5;
+const COURSE_GAP: f32 = 14.0; // min obstacle spacing (m); exceeds one action's travel
 
 struct Enemy {
     d: f32,
@@ -38,7 +37,6 @@ struct Enemy {
     y: f32,
     hit_t: f32,
     boss: bool,
-    kind: i32,
 }
 
 struct Shot {
@@ -89,6 +87,7 @@ struct Shell {
 pub struct RailShooter {
     hop_dt: f32,
     dist: Vec<f32>,
+    course: Vec<crate::modes::course::Ev>,
     enemies: Vec<Enemy>,
     shots: Vec<Shot>,
     rings: Vec<Ring>,
@@ -117,6 +116,7 @@ impl RailShooter {
         RailShooter {
             hop_dt: 1.0 / 60.0,
             dist: vec![0.0],
+            course: Vec::new(),
             enemies: Vec::new(),
             shots: Vec::new(),
             rings: Vec::new(),
@@ -222,6 +222,43 @@ fn box_outlined(center: Vec3, size: Vec3, c: Color) {
     }
 }
 
+/// Enemy slot (x, y) within a wave of `n`, arranged by the event kind so each
+/// volley reads as a recognisable formation rather than a random scatter.
+fn formation(kind: Kind, k: i32, n: i32) -> (f32, f32) {
+    let off = k as f32 - (n - 1) as f32 * 0.5;
+    match kind {
+        Kind::Block => (off * 1.5, 1.4),                  // a line abreast
+        Kind::Wave => (off * 1.3, 1.0 + off.abs() * 0.7), // a V
+        Kind::Loop => {
+            let a = off * 0.5; // an arc
+            (a.sin() * 2.2, 1.6 + (1.0 - a.cos()) * 1.8)
+        }
+        Kind::Pit => (0.0, 1.4),
+    }
+}
+
+/// An angular fighter: a forward fuselage with two swept-back wings (built from
+/// sheared parallelepipeds, so it reads as a dart, not a box).
+fn draw_wedge(center: Vec3, s: f32, body: Color, wing: Color) {
+    let d = -center.z;
+    let pp = |ex: Vec3, ey: Vec3, ez: Vec3, off: Vec3, col: Color| {
+        let o = center + off - ex * 0.5 - ey * 0.5 - ez * 0.5;
+        draw_affine_parallelepiped(o, ex, ey, ez, None, fog(col, d));
+    };
+    // Fuselage, nose forward (+z).
+    pp(vec3(0.2 * s, 0.0, 0.0), vec3(0.0, 0.16 * s, 0.0), vec3(0.0, 0.0, 1.0 * s), Vec3::ZERO, body);
+    // Swept wings (extend out and back).
+    for side in [-1.0f32, 1.0] {
+        pp(
+            vec3(side * 0.78 * s, 0.0, -0.45 * s),
+            vec3(0.0, 0.05 * s, 0.0),
+            vec3(0.0, 0.0, 0.34 * s),
+            vec3(side * 0.12 * s, 0.0, -0.12 * s),
+            wing,
+        );
+    }
+}
+
 impl Mode for RailShooter {
     fn name(&self) -> &'static str {
         "Rail Shooter"
@@ -274,55 +311,42 @@ impl Mode for RailShooter {
             self.dist.push(d);
         }
 
-        // Roll threshold: the ~92nd percentile of beat strength, clamped (beat
-        // strength is hard-capped at 4.0 and floors ~1.3).
-        let mut strengths: Vec<f32> = p.beats.iter().map(|b| b.strength).collect();
-        strengths.sort_by(|a, b| a.total_cmp(b));
-        let roll_thresh = if strengths.is_empty() {
-            3.5
-        } else {
-            strengths[(strengths.len() as f32 * 0.92) as usize % strengths.len().max(1)].clamp(3.0, 3.9)
-        };
+        // The song designs the course: typed, distance-spaced events (the same
+        // generator Beat Surfer uses, so the spacing is guaranteed non-crowding).
+        self.course = build_course(p, &self.dist, track.duration(), COURSE_GAP);
 
-        // ---- enemy waves + their lead-fired laser volleys ------------------
+        // ---- each event -> an enemy WAVE (formation by kind) + lead-fired
+        //      volley; flow rings on the open events; a roll on the big doubles.
         self.enemies.clear();
         self.shots.clear();
         self.rolls.clear();
-        let mut last_enemy = -10.0f32;
-        let mut last_roll = -10.0f32;
-        for (i, b) in p.beats.iter().enumerate() {
-            if b.t < 1.0 || b.t > track.duration() - 1.0 {
-                continue;
-            }
-            if b.strength >= roll_thresh && b.t - last_roll > 3.0 {
-                self.rolls.push(Roll { t: b.t });
-                last_roll = b.t;
-            }
-            if b.strength < ENEMY_STRENGTH || b.t - last_enemy < ENEMY_MIN_GAP {
-                continue;
-            }
-            last_enemy = b.t;
-            let n = (1 + ((b.strength - ENEMY_STRENGTH) * 1.2) as i32).clamp(1, 3);
-            let dd = self.dist_at(b.t) + KILL_AHEAD;
-            let power = p.loudness_at(b.t);
-            let twin = power > 0.45;
-            for k in 0..n {
-                let x = (k as f32 - (n - 1) as f32 * 0.5) * 1.6 + (hash01(i as i32 * 7 + k) - 0.5) * 0.8;
-                let y = 1.1 + hash01(i as i32 * 13 + k) * 2.1;
-                self.enemies.push(Enemy { d: dd, x, y, hit_t: b.t, boss: b.strength >= roll_thresh, kind: i as i32 * 31 + k });
-                self.shots.push(Shot { fire_t: b.t - LEAD, hit_t: b.t, tx: x, ty: y, td: dd, twin, power });
-            }
-        }
-
-        // ---- checkpoint rings on an even distance cadence ------------------
         self.rings.clear();
-        let total = *self.dist.last().unwrap_or(&0.0);
-        let mut dm = RING_GAP_M;
-        let mut idx = 0;
-        while dm < total {
-            self.rings.push(Ring { d: dm, gold: idx % 7 == 6 });
-            dm += RING_GAP_M;
-            idx += 1;
+        let mut last_roll = -10.0f32;
+        for (ei, e) in self.course.iter().enumerate() {
+            let power = p.loudness_at(e.t);
+            let twin = power > 0.45;
+            let dd = e.d + KILL_AHEAD;
+            // A whole volley shares one hit_t, so the wave reads as a musical
+            // PHRASE rather than a spray. Pit is an open gate: a ring, no ships.
+            let n = if e.kind == Kind::Pit {
+                0
+            } else {
+                ((1.0 + (e.strength - 1.5) * 1.3) * self.p_density).round().clamp(1.0, 5.0) as i32
+            };
+            for k in 0..n {
+                let (x, y) = formation(e.kind, k, n);
+                self.enemies.push(Enemy { d: dd, x, y, hit_t: e.t, boss: e.double.is_some() });
+                self.shots.push(Shot { fire_t: e.t - LEAD, hit_t: e.t, tx: x, ty: y, td: dd, twin, power });
+            }
+            // Flow rings on the open/melodic events (Loop/Pit) or every 4th hit.
+            if matches!(e.kind, Kind::Loop | Kind::Pit) || ei % 4 == 3 {
+                self.rings.push(Ring { d: e.d, gold: e.double.is_some() });
+            }
+            // The strongest doubles snap a barrel roll — distance-spaced for free.
+            if e.double.is_some() && e.t - last_roll > 2.5 {
+                self.rolls.push(Roll { t: e.t });
+                last_roll = e.t;
+            }
         }
 
         // ---- asteroid scenery on mid-band runs -----------------------------
@@ -518,16 +542,10 @@ impl Mode for RailShooter {
             if z > 2.0 || z < -FAR {
                 continue;
             }
-            let s = if e.boss { 1.0 + 0.3 * feat.bass } else { 1.0 };
-            let body = amber();
-            let fin = 0.5 + (hash01(e.kind) - 0.5) * 0.3;
-            box_outlined(vec3(e.x, e.y, z), vec3(0.6, 0.34, 0.9) * s, body);
-            // angled fins (spread jittered per enemy)
-            for side in [-1.0f32, 1.0] {
-                box_outlined(vec3(e.x + side * fin * s, e.y + 0.18 * s, z - 0.1), vec3(0.1, 0.5, 0.4) * s, mix(body, ink(), 0.3));
-            }
+            let s = if e.boss { 1.35 + 0.3 * feat.bass } else { 1.0 };
+            draw_wedge(vec3(e.x, e.y, z), s, amber(), mix(amber(), ink(), 0.35));
             if e.boss {
-                draw_cube_wires(vec3(e.x, e.y, z), vec3(1.4, 1.0, 1.4) * s, with_alpha(amber_glow(), 0.5));
+                draw_cube_wires(vec3(e.x, e.y, z), vec3(1.7, 1.1, 1.7) * s, with_alpha(amber_glow(), 0.5));
             }
         }
 

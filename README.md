@@ -87,31 +87,33 @@ the cloud, and beats burst it brighter.
 **Vinyl** — a spinning record whose concentric grooves trace the live waveform;
 loudness drags the platter faster and an amber label pulses on the beat.
 
-**Beat Surfer** — a 3D lane runner (think Subway Surfers), played entirely by
-the music. Cherry pre-analyzes the whole track at load and turns the beat grid
-into choreography: strong beats become **trains** in the player's lane with a
-swerve scheduled before they arrive, other beats become **barriers** with the
-jump timed so its apex lands exactly on the beat (Chromium T-Rex airtime), and
-treble runs become **coin trails laid along the player's own future path** —
-curving through swerves, arcing over jumps, every coin collected on the music.
-Live layers animate the world: bass pulses the portal pylons and the sun, mids
-light the train windows and breathe the skyline, treble spins the coins and
-twinkles the stars, loudness drives world speed and the camera's FOV.
-Rendered as flat-shaded low-poly with hand-rolled distance fog and wire
-outlines — no textures, no shaders. Mechanics referenced from MIT-licensed
-open-source runners ([NovemberDev's Godot endless runner](https://github.com/NovemberDev/novemberdev-godot-endless-runner-tutorial),
-[joaokucera's Unity endless runner](https://github.com/joaokucera/unity-endless-runner))
-and jump timing from [Chromium's T-Rex runner](https://source.chromium.org/chromium/chromium/src/+/main:components/neterror/resources/dino_game/) (BSD).
+**Beat Surfer** — a [Vib-Ribbon](https://en.wikipedia.org/wiki/Vib-Ribbon)-style
+auto-runner played entirely by the music. At load the whole track is turned into
+one obstacle **course**: every beat is classified by its spectral character into
+a *typed* obstacle — a heavy/bass hit becomes an **arch** to leap, the music
+dropping out becomes a **gap** to stride, sustained mids a **ring** to spin
+through, treble a run of **teeth** to roll over — and then a min-gap sweep in
+distance spaces them so they never crowd each other (which also makes the old
+"jump on every beat" timing glitch *structurally* impossible: with the obstacles
+guaranteed far enough apart, the avatar's pose is a clean pure function of how
+far it's travelled, with no overlapping jump arcs to snap between). The track
+itself is a single undulating **ribbon** whose surface *is* that obstacle height
+field — a jump arch lifts the road, a gap dips it — rippled live by the waveform
+and graded by loudness. The runner jumps, spins, rolls and strides exactly as
+the obstacle it's clearing demands, and coins ride the same surface so each is
+collected on the music. Flat low-poly, hand-rolled fog — no textures, no shaders.
 
-**Rail Shooter** — a StarFox-style on-rails space flight the music flies. Same
-offline-distance trick as Beat Surfer, with one new mechanic: **laser lead** —
-the Arwing's twin bolts fire *early*, by their exact travel time, so the tracer
-strikes the enemy on the beat and it bursts into debris. Strong beats stream
-fighter formations, an even cadence flows checkpoint rings, bass breathes the
-canyon walls, mid runs throw asteroid scenery, and the rarest hits snap a full
-barrel roll. The corridor is surfaced with **procedurally generated**
-`.kkrieger`-style sci-fi panels (grid, seams, rivets — baked neutral and tinted
-by the theme, so zero assets and it re-skins with the palette).
+**Rail Shooter** — a StarFox-style on-rails flight the music flies, built on the
+**same course generator**. Each typed event becomes a **wave** of angular wedge
+fighters in a formation chosen by its kind (a line abreast, a V, an arc), and the
+Arwing's twin lasers are fired *early* by their exact travel time — **laser
+lead** — so the tracer strikes on the beat and the fighter bursts into debris.
+Because a whole volley shares one beat, the wave reads as a musical phrase rather
+than a spray. The open, melodic events flow **checkpoint rings**, the strongest
+double-hits snap a **barrel roll**, bass breathes the canyon, and the corridor is
+surfaced with **procedurally generated** `.kkrieger`-style sci-fi panels (grid,
+seams, rivets — baked neutral and tinted by the theme, so zero assets and it
+re-skins with the palette).
 
 ## Run it
 
@@ -169,7 +171,9 @@ src/
     scope.rs       glowing oscilloscope with phosphor persistence
     spectrogram.rs scrolling time-frequency heat waterfall
     starfield.rs   beat-warped projected starfield
-    surfer.rs      beat-choreographed 3D lane runner (immediate-mode 3D + fog)
+    course.rs      shared audio->course generator (typed, distance-spaced obstacles)
+    surfer.rs      Vib-Ribbon-style 3D auto-runner on a course (immediate-mode 3D)
+    railshooter.rs StarFox-style rails shooter on the same course (laser lead)
 ```
 
 Modes draw in a fixed 16:9 world and never touch pixels or the window, so the
