@@ -89,9 +89,12 @@ impl Analyser {
 
         // Adaptive loudness: auto-level to the recent peak (a running peak with a
         // ~2s release + floor) so quiet and loud tracks both use the full range.
-        let rel = (-dt / 2.0).exp();
+        let rel = (-dt / 2.5).exp();
         self.loud_ref = raw_rms.max(self.loud_ref * rel).max(0.008);
-        let rms = (raw_rms * 0.72 / self.loud_ref).min(1.0);
+        // Headroom (×1.25) so typical content lands ~0.6–0.8 and only true peaks
+        // reach 1.0. Without it `rms` pinned to a constant on any sustained
+        // passage (loud_ref == raw_rms), so loud and quiet looked identical.
+        let rms = (raw_rms / (self.loud_ref * 1.25)).min(1.0);
 
         for i in 0..self.fft_len {
             let s = if i < n { samples[i] } else { 0.0 };
@@ -124,14 +127,16 @@ impl Analyser {
             frame_max = frame_max.max(raw[b]);
         }
 
-        // Adaptive band gain: map the recent-loudest band to ~0.9, then a sqrt
-        // curve lifts the lower levels so real (broadband) music fills the range.
+        // Adaptive band gain: drive strong-but-not-peak bands to full so real
+        // (broadband) music fills the range, with a near-linear curve that keeps
+        // loud and quiet bands visibly different. The release is near-transparent
+        // (~0.1s) so each mode owns its own fall instead of stacking on a slow one.
         self.band_ref = frame_max.max(self.band_ref * rel).max(0.0012);
-        let band_gain = 0.9 / self.band_ref;
-        let release = (-dt * 4.5).exp();
+        let band_gain = 1.2 / self.band_ref;
+        let release = (-dt * 9.0).exp();
         let mut bands = [0.0f32; N_BANDS];
         for b in 0..N_BANDS {
-            let target = (raw[b] * band_gain).min(1.0).powf(0.7);
+            let target = (raw[b] * band_gain).min(1.0).powf(0.85);
             self.smoothed[b] = target.max(self.smoothed[b] * release);
             bands[b] = self.smoothed[b];
         }

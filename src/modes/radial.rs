@@ -23,7 +23,7 @@ pub struct Radial {
 
 impl Radial {
     pub fn new() -> Self {
-        Radial { heights: [0.0; N_BANDS], caps: [0.0; N_BANDS], cap_vel: [0.0; N_BANDS], rot: 0.0, flash: 0.0, gain: 1.15, smooth: 0.55, inner: 1.7 }
+        Radial { heights: [0.0; N_BANDS], caps: [0.0; N_BANDS], cap_vel: [0.0; N_BANDS], rot: 0.0, flash: 0.0, gain: 1.4, smooth: 0.30, inner: 1.7 }
     }
 }
 
@@ -93,7 +93,7 @@ impl Mode for Radial {
         let v = View::fit_world(AW, AH);
         let (cx, cy) = (AW * 0.5, AH * 0.5);
         let r0 = self.inner * (1.0 + self.flash * 0.12);
-        let maxlen = 3.4;
+        let maxlen = 4.0;
         let hero = (0..N_BANDS).max_by(|&a, &b| self.heights[a].total_cmp(&self.heights[b])).unwrap_or(0);
 
         // Faint inner ring.

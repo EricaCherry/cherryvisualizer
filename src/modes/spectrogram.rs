@@ -72,11 +72,11 @@ impl Mode for Spectrogram {
         let mut col = [0.0f32; N_BANDS];
         for i in 0..N_BANDS {
             // ^1.4 pushes quiet bins down toward the ink floor (bimodal panel).
-            let raw = (ctx.feat.bands[i] * self.gain).clamp(0.0, 1.0).powf(1.4);
+            let raw = (ctx.feat.bands[i] * self.gain).clamp(0.0, 1.0).powf(1.1);
             // Show the level ABOVE a slow per-band envelope, so sustained loud
             // bass settles to teal and only transient hits burn amber.
             self.env[i] += (raw - self.env[i]) * 0.05;
-            col[i] = ((raw - 0.5 * self.env[i]).max(0.0) * 1.4).min(1.0);
+            col[i] = ((raw - 0.3 * self.env[i]).max(0.0) * 1.4).min(1.0);
         }
         self.cols.push_back(col);
         while self.cols.len() > self.width {

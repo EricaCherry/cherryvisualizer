@@ -30,8 +30,10 @@ impl Scope {
 
     fn sample(wave: &[f32]) -> Vec<f32> {
         let n = wave.len().max(1);
-        // Normalize by the window peak so the trace shows shape at any track level.
-        let norm = 0.78 / wave.iter().fold(0.0f32, |m, &x| m.max(x.abs())).max(0.05);
+        // Fixed scale on the raw PCM (NOT per-window peak — that forced every
+        // window to the same height regardless of loudness). Loudness reaches the
+        // trace through the rms-scaled amplitude below, so quiet stays small.
+        let norm = 2.4;
         let mut v: Vec<f32> = (0..NPTS)
             .map(|i| {
                 let f = i as f32 / (NPTS - 1) as f32;
@@ -39,8 +41,8 @@ impl Scope {
                 wave[idx] * norm
             })
             .collect();
-        // A couple of [1,2,1] passes take the jagged edge off the trace.
-        for _ in 0..2 {
+        // One [1,2,1] pass takes the jagged edge off without flattening crests.
+        for _ in 0..1 {
             let src = v.clone();
             for i in 1..NPTS - 1 {
                 v[i] = src[i - 1] * 0.25 + src[i] * 0.5 + src[i + 1] * 0.25;
@@ -93,7 +95,7 @@ impl Mode for Scope {
         let v = View::fit_world(AW, AH);
         let feat = ctx.feat;
         let cy = AH * 0.46; // off dead-center; dark space above and below
-        let amp = self.amp * (0.7 + feat.rms * 0.9);
+        let amp = self.amp * (0.28 + feat.rms * 1.4);
 
         // Dim reference line — kept faint so it doesn't pull the eye back to
         // center against the deliberately off-center band.

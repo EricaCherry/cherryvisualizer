@@ -62,7 +62,7 @@ impl Mode for Vinyl {
         let (cx, cy) = (AW * 0.5, AH * 0.5);
         let outer = 3.6;
         let wave = ctx.wave;
-        let norm = 1.0 / wave.iter().fold(0.0f32, |m, &x| m.max(x.abs())).max(0.05);
+        let norm = 1.0; // raw PCM scale; loudness enters via the rms factor below
 
         // Disc body: a dark filled platter with a faint sheen ring.
         v.circle(cx, cy, outer, mix(ink(), slate(), 0.75));
@@ -75,13 +75,13 @@ impl Mode for Vinyl {
         for r in 0..rings {
             let fr = r as f32 / (rings - 1) as f32;
             let base_r = 1.05 + fr * (outer - 1.05);
-            let energy = 0.18 + if fr > 0.5 { ctx.feat.treble } else { ctx.feat.bass } * 0.65;
+            let energy = 0.18 + if fr > 0.5 { ctx.feat.treble } else { ctx.feat.bass } * 1.0;
             let c = with_alpha(grade(energy), 0.5);
             let mut prev: Option<(f32, f32)> = None;
             for s in 0..=segs {
                 let a = s as f32 / segs as f32 * std::f32::consts::TAU + self.angle;
                 let wi = (s + r * 5) % wave.len();
-                let rr = base_r + wave[wi] * norm * self.groove * 0.06;
+                let rr = base_r + wave[wi] * norm * self.groove * 0.06 * (0.5 + ctx.feat.rms * 1.5);
                 let p = (cx + a.cos() * rr, cy + a.sin() * rr);
                 if let Some((px, py)) = prev {
                     v.line(px, py, p.0, p.1, 1.3, c);

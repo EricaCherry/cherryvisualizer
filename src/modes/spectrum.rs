@@ -33,8 +33,8 @@ impl Spectrum {
             caps: [0.0; N_BANDS],
             cap_vel: [0.0; N_BANDS],
             flash: 0.0,
-            gain: 1.1,
-            smooth: 0.58,
+            gain: 1.35,
+            smooth: 0.30,
             gap: 0.22,
         }
     }
@@ -117,7 +117,7 @@ impl Mode for Spectrum {
         let hero = (0..N_BANDS).max_by(|&a, &b| self.heights[a].total_cmp(&self.heights[b])).unwrap_or(0);
 
         let base = AH * 0.42; // off-center baseline -> asymmetric negative space
-        let max_h = AH * 0.56;
+        let max_h = AH * 0.66;
         let margin = 0.35;
         let usable = AW - margin * 2.0;
         // Log-ish bar widths (wider lows, narrower highs) instead of 32 clones.
