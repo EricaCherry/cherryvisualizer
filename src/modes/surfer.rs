@@ -15,6 +15,7 @@
 
 use macroquad::prelude::*;
 
+use crate::material3d;
 use crate::modes::course::{Ev, Kind, build_course};
 use crate::modes::{Category, FrameCtx, Mode};
 use crate::style::{self, amber, amber_glow, grade, hash01, mix, spec, teal};
@@ -376,8 +377,9 @@ impl Mode for Surfer {
 
         // ================= 3D pass ===========================================
         let fov = (58.0 + feat.rms * 9.0 + self.cam_kick * 14.0).to_radians();
+        let cam_pos = vec3(px * 0.7, 2.7 + py * 0.25 + self.cam_kick * 0.12, 5.4);
         set_camera(&Camera3D {
-            position: vec3(px * 0.7, 2.7 + py * 0.25 + self.cam_kick * 0.12, 5.4),
+            position: cam_pos,
             target: vec3(px * 0.85, 1.1 + py * 0.45, -8.0),
             up: vec3(bank, 1.0, 0.0).normalize(),
             fovy: fov,
@@ -401,12 +403,14 @@ impl Mode for Surfer {
             let ripple = wave[(i * 3) % wave.len()] * 0.16 * (0.4 + feat.treble);
             let h = self.surface_y(d) + ripple;
             let load = prof.loudness_at(self.t_at_dist(d));
-            let col = fog(grade(0.08 + load * 0.5), -z);
+            // UN-fogged albedo: the PBR material lights + fogs it in the shader.
+            // v rides cumulative distance so the brushed grooves scroll past.
+            let col = grade(0.08 + load * 0.5);
             for j in 0..3 {
                 let fj = j as f32 / 2.0;
                 let xo = (fj - 0.5) * 2.0 * ROAD_HALF;
                 let lift = (fj - 0.5).abs() * 0.5;
-                verts.push(Vertex::new(xo, h + lift, z, fj, f, col));
+                verts.push(Vertex::new(xo, h + lift, z, fj, d, col));
             }
             edges.push((vec3(-ROAD_HALF, h + 0.5, z), vec3(ROAD_HALF, h + 0.5, z)));
         }
@@ -419,7 +423,38 @@ impl Mode for Surfer {
                 idx.extend_from_slice(&[a, b, c, a, c, dd]);
             }
         }
+        // Real per-vertex world normals (accumulated from the faces) so the
+        // ribbon catches the light and the bump map has a frame to perturb.
+        let mut nrm = vec![Vec3::ZERO; verts.len()];
+        let mut tri = 0;
+        while tri + 2 < idx.len() {
+            let (ia, ib, ic) = (idx[tri] as usize, idx[tri + 1] as usize, idx[tri + 2] as usize);
+            let fnv = (verts[ib].position - verts[ia].position).cross(verts[ic].position - verts[ia].position);
+            nrm[ia] += fnv;
+            nrm[ib] += fnv;
+            nrm[ic] += fnv;
+            tri += 3;
+        }
+        for (v, nn) in verts.iter_mut().zip(nrm) {
+            let u = nn.normalize_or_zero();
+            v.normal = vec4(u.x, u.y, u.z, 0.0);
+        }
+        material3d::bind(
+            material3d::Surface::Ribbon,
+            &material3d::LitParams {
+                cam: cam_pos,
+                light_dir: vec3(-0.35, -0.85, -0.4),
+                light_color: { let a = mix(amber(), spec(), 0.5); vec3(a.r, a.g, a.b) },
+                ambient: { let s = style::teal_deep(); vec3(s.r, s.g, s.b) * 0.55 },
+                horizon: HORIZON,
+                metal: 0.85,
+                rough: 1.0,
+                tile: vec2(2.0, 0.16),
+                pulse: feat.bass * 0.6 + feat.beat.unwrap_or(0.0) * 0.4,
+            },
+        );
         draw_mesh(&Mesh { vertices: verts, indices: idx, texture: None });
+        material3d::unbind();
         // Bright edge rails trace the ribbon for definition.
         for i in 0..RN - 1 {
             let z = 2.0 - i as f32 / (RN - 1) as f32 * 70.0;

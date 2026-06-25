@@ -13,6 +13,7 @@
 mod analysis;
 mod audio;
 mod export;
+mod material3d;
 mod modes;
 mod postfx;
 mod style;
