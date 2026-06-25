@@ -6,6 +6,7 @@
 //! here + one line in `main.rs`.
 
 pub mod breakout;
+pub mod nebula;
 pub mod radial;
 pub mod railshooter;
 pub mod scope;
@@ -14,6 +15,7 @@ pub mod spectrum;
 pub mod starfield;
 pub mod surfer;
 pub mod tunnel;
+pub mod vinyl;
 
 use crate::analysis::Features;
 use crate::track::Track;

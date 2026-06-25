@@ -49,7 +49,7 @@ theme: pick Background / Body / Hero / Highlight with color pickers in
 
 ## The modes
 
-Nine so far, mixing the flagship "the audio plays the game" modes with the
+Eleven so far, mixing the flagship "the audio plays the game" modes with the
 classic music-visualizer staples:
 
 **Waveform Breakout** — breakout with no player and no paddle sprite: **the live
@@ -79,6 +79,13 @@ twisting on the treble and punching into warp on the beat, with a glowing eye.
 
 **Polar Spectrum** — the 32-band spectrum wrapped into a mirrored, slowly
 rotating ring: quiet bands hug the rim in teal, the loudest shoots out as amber.
+
+**Nebula** — a particle bloom field: the treble sprays sparks out from a
+luminous core, each spark's direction set by its frequency band, the mids swirl
+the cloud, and beats burst it brighter.
+
+**Vinyl** — a spinning record whose concentric grooves trace the live waveform;
+loudness drags the platter faster and an amber label pulses on the beat.
 
 **Beat Surfer** — a 3D lane runner (think Subway Surfers), played entirely by
 the music. Cherry pre-analyzes the whole track at load and turns the beat grid

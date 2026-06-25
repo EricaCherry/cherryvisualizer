@@ -29,6 +29,7 @@ use analysis::{features_at, Analyser, FFT_LEN};
 use audio::AudioEngine;
 use export::{ExportSettings, Exporter};
 use modes::breakout::Breakout;
+use modes::nebula::Nebula;
 use modes::radial::Radial;
 use modes::railshooter::RailShooter;
 use modes::scope::Scope;
@@ -37,6 +38,7 @@ use modes::spectrum::Spectrum;
 use modes::starfield::Starfield;
 use modes::surfer::Surfer;
 use modes::tunnel::Tunnel;
+use modes::vinyl::Vinyl;
 use modes::{Category, FrameCtx, Mode, Param, ParamKind};
 use postfx::PostFx;
 use track::Track;
@@ -46,7 +48,7 @@ const SHOT_FRAMES: u32 = 180;
 /// The mode registry — the single source of truth for the picker, the factory,
 /// and `MODE_COUNT`. Add a mode here (plus its `mod` line) and it appears
 /// everywhere; nothing else to keep in sync.
-const MODES: [fn() -> Box<dyn Mode>; 9] = [
+const MODES: [fn() -> Box<dyn Mode>; 11] = [
     || Box::new(Breakout::new()),
     || Box::new(Spectrum::new()),
     || Box::new(Scope::new()),
@@ -54,6 +56,8 @@ const MODES: [fn() -> Box<dyn Mode>; 9] = [
     || Box::new(Starfield::new()),
     || Box::new(Tunnel::new()),
     || Box::new(Radial::new()),
+    || Box::new(Nebula::new()),
+    || Box::new(Vinyl::new()),
     || Box::new(Surfer::new()),
     || Box::new(RailShooter::new()),
 ];
