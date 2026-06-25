@@ -201,6 +201,23 @@ fn spawn_open() -> LoadJob {
     LoadJob { rx }
 }
 
+/// Open an image picker on a background thread; the channel yields the decoded
+/// `Image` (or None if cancelled / unreadable). The `Texture2D` is built on the
+/// main thread when the image arrives (texture upload needs the GL context).
+fn spawn_open_bg() -> Receiver<Option<Image>> {
+    let (tx, rx) = channel();
+    std::thread::spawn(move || {
+        let img = rfd::FileDialog::new()
+            .add_filter("Image", &["png", "jpg", "jpeg", "bmp", "webp", "gif"])
+            .set_title("Choose background image")
+            .pick_file()
+            .and_then(|p| std::fs::read(&p).ok())
+            .and_then(|bytes| Image::from_file_with_format(&bytes, None).ok());
+        let _ = tx.send(img);
+    });
+    rx
+}
+
 /// Open the native "save as" dialog on a background thread; the channel yields
 /// the chosen path (or None if cancelled).
 fn spawn_save() -> Receiver<Option<PathBuf>> {
@@ -227,6 +244,8 @@ enum Tab {
 /// What the UI asks the app to do (applied after the egui pass).
 enum Action {
     OpenFile,
+    OpenBackground,
+    ClearBackground,
     Quit,
     ToggleFullscreen,
     ShowAbout,
@@ -351,6 +370,7 @@ async fn main() {
     // Interactive export state.
     let mut exporter: Option<Exporter> = None;
     let mut save_dialog: Option<Receiver<Option<PathBuf>>> = None;
+    let mut bg_job: Option<Receiver<Option<Image>>> = None;
     let mut pending_settings: Option<ExportSettings> = None;
     let mut export_status = String::new();
     // Headless CLI export (created lazily on the first frame so GL is ready).
@@ -430,6 +450,16 @@ async fn main() {
 
         // ---- headless CLI: one-shot PNG of a single frame (dev orientation) --
         if args.export_frame.is_some() {
+            // Dev hook: CHERRY_BG=<image> previews the background-image feature.
+            if let Ok(p) = std::env::var("CHERRY_BG") {
+                if let Ok(bytes) = std::fs::read(&p) {
+                    if let Ok(im) = Image::from_file_with_format(&bytes, None) {
+                        let tex = Texture2D::from_image(&im);
+                        tex.set_filter(FilterMode::Linear);
+                        style::set_background(Some(tex));
+                    }
+                }
+            }
             let frame = std::env::var("CHERRY_FRAME").ok().and_then(|s| s.parse().ok()).unwrap_or(300);
             let img = export::render_preview(export_settings, make_mode(sel), audio.track(), frame);
             img.export_png("export-frame.png");
@@ -496,6 +526,22 @@ async fn main() {
                 }
                 Ok(LoadResult::Cancelled) => loading = None,
                 Err(TryRecvError::Disconnected) => loading = None,
+                Err(TryRecvError::Empty) => {}
+            }
+        }
+
+        // ---- poll the background-image picker (build the texture here) ------
+        if let Some(rx) = &bg_job {
+            match rx.try_recv() {
+                Ok(img) => {
+                    if let Some(img) = img {
+                        let tex = Texture2D::from_image(&img);
+                        tex.set_filter(FilterMode::Linear);
+                        style::set_background(Some(tex));
+                    }
+                    bg_job = None;
+                }
+                Err(TryRecvError::Disconnected) => bg_job = None,
                 Err(TryRecvError::Empty) => {}
             }
         }
@@ -593,6 +639,12 @@ async fn main() {
                             loading = Some(spawn_open());
                         }
                     }
+                    Action::OpenBackground => {
+                        if bg_job.is_none() {
+                            bg_job = Some(spawn_open_bg());
+                        }
+                    }
+                    Action::ClearBackground => style::set_background(None),
                     Action::Quit => std::process::exit(0),
                     Action::ToggleFullscreen => {
                         fullscreen = !fullscreen;
@@ -776,6 +828,15 @@ fn build_ui(ctx: &egui::Context, data: &UiData, ui: &mut UiState, actions: &mut 
             bar.menu_button("File", |m| {
                 if m.button("Open audio file…").clicked() {
                     actions.push(Action::OpenFile);
+                    m.close_menu();
+                }
+                m.separator();
+                if m.button("Background image…").clicked() {
+                    actions.push(Action::OpenBackground);
+                    m.close_menu();
+                }
+                if m.add_enabled(style::has_background(), egui::Button::new("Clear background")).clicked() {
+                    actions.push(Action::ClearBackground);
                     m.close_menu();
                 }
                 m.separator();
@@ -998,6 +1059,43 @@ fn tab_settings(ui: &mut egui::Ui, st: &mut UiState, data: &UiData, actions: &mu
         if changed {
             actions.push(Action::SetCustom(st.custom_anchors));
         }
+    }
+    ui.add_space(8.0);
+    ui.separator();
+    ui.add_space(4.0);
+
+    // ---- background image (global) ----------------------------------------
+    ui.label(egui::RichText::new("Background").strong());
+    ui.horizontal(|h| {
+        if h.button("Choose image…").clicked() {
+            actions.push(Action::OpenBackground);
+        }
+        if h.add_enabled(style::has_background(), egui::Button::new("Clear")).clicked() {
+            actions.push(Action::ClearBackground);
+        }
+    });
+    if style::has_background() {
+        let mut fit = style::bg_fit();
+        let name_of = |f: style::BgFit| match f {
+            style::BgFit::Cover => "Cover",
+            style::BgFit::Contain => "Contain",
+            style::BgFit::Stretch => "Stretch",
+        };
+        ui.horizontal(|h| {
+            h.label("Fit");
+            egui::ComboBox::from_id_salt("bg_fit").selected_text(name_of(fit)).show_ui(h, |ui| {
+                for f in [style::BgFit::Cover, style::BgFit::Contain, style::BgFit::Stretch] {
+                    ui.selectable_value(&mut fit, f, name_of(f));
+                }
+            });
+        });
+        style::set_bg_fit(fit);
+        let mut dim = style::bg_dim();
+        if ui.add(egui::Slider::new(&mut dim, 0.0..=0.9).text("Dim")).changed() {
+            style::set_bg_dim(dim);
+        }
+    } else {
+        ui.label(egui::RichText::new("No image set.").weak().small());
     }
     ui.add_space(8.0);
     ui.separator();

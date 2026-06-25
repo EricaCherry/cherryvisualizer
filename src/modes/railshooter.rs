@@ -389,8 +389,11 @@ impl Mode for RailShooter {
 
         // ================= 2D backdrop (screen camera) =======================
         view::apply_screen_camera();
-        clear_background(ink());
         let (sw, sh) = (view::screen_w(), view::screen_h());
+        if style::has_background() {
+            style::draw_background(1.0);
+        } else {
+        clear_background(ink());
         let horizon_y = sh * 0.5;
         let deep = mix(ink(), slate(), 0.8);
         for i in 0..14 {
@@ -417,6 +420,7 @@ impl Mode for RailShooter {
         for (i, &e) in feat.bands.iter().enumerate() {
             let h = sh * (0.01 + e * e * 0.06);
             draw_rectangle(i as f32 * bw, horizon_y - h, bw * 0.92, h, mix(ink(), teal_deep(), 0.8));
+        }
         }
 
         // ================= 3D pass ===========================================

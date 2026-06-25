@@ -51,10 +51,15 @@ impl PostFx {
         view::set_export_target(Some(self.fb.clone()));
         view::apply_screen_camera();
         if self.fresh || fade <= 0.0 {
-            style::backdrop(); // full floor (first frame, or modes without trails)
+            // Full floor (first frame, or modes without trails) — the user's
+            // background image if set, else the graded backdrop.
+            if !style::draw_background(1.0) {
+                style::backdrop();
+            }
             self.fresh = false;
-        } else {
-            style::backdrop_blend(fade); // decay old content toward the floor
+        } else if !style::draw_background(fade) {
+            // Decay old content toward the floor (or settle it over the image).
+            style::backdrop_blend(fade);
         }
         mode.draw(ctx); // content only — its backdrop/finish are the pipeline's job
 
