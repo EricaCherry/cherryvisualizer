@@ -42,10 +42,13 @@ impl Scope {
             })
             .collect();
         // One [1,2,1] pass takes the jagged edge off without flattening crests.
+        // Endpoints are edge-replicated (not left raw) so they can't jut out.
         for _ in 0..1 {
             let src = v.clone();
-            for i in 1..NPTS - 1 {
-                v[i] = src[i - 1] * 0.25 + src[i] * 0.5 + src[i + 1] * 0.25;
+            for i in 0..NPTS {
+                let l = src[i.saturating_sub(1)];
+                let r = src[(i + 1).min(NPTS - 1)];
+                v[i] = l * 0.25 + src[i] * 0.5 + r * 0.25;
             }
         }
         v

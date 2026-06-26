@@ -47,7 +47,10 @@ struct Brick {
     hw: f32,
     hh: f32,
     band: usize,
-    color: Color,
+    /// Mix factor teal_deep→teal (0..1). The COLOR is resolved live from the
+    /// theme each frame so a theme switch re-skins the wall immediately, instead
+    /// of caching a Color that freezes until the track reloads.
+    shade: f32,
     alive: bool,
     anim: f32,
 }
@@ -242,7 +245,7 @@ impl Breakout {
                     hw: bw,
                     hh: bh,
                     band: (c * N_BANDS / self.cols).min(N_BANDS - 1),
-                    color: mix(teal_deep(), teal(), (tone * lift).clamp(0.0, 1.0)),
+                    shade: (tone * lift).clamp(0.0, 1.0),
                     alive: true,
                     anim: 1.0,
                 });
@@ -273,7 +276,7 @@ impl Breakout {
                 vy: a.sin() * (1.0 + hash01(k * 17) * 2.5),
                 w: 0.10 + hash01(k * 7) * 0.10,
                 life: 0.6,
-                color: b.color,
+                color: mix(teal_deep(), teal(), b.shade),
             });
         }
     }
@@ -300,11 +303,15 @@ impl Breakout {
             }
             pts[i] = s / (hi - lo + 1) as f32;
         }
-        // 2) A few [1,2,1] passes round it into a flowing curve.
+        // 2) A few [1,2,1] passes round it into a flowing curve. The endpoints
+        //    are smoothed too (edge-replicated) — leaving them raw made them jut
+        //    out from their smoothed neighbours as a spike at each end.
         for _ in 0..3 {
             let src = pts;
-            for i in 1..WAVE_PTS - 1 {
-                pts[i] = src[i - 1] * 0.25 + src[i] * 0.5 + src[i + 1] * 0.25;
+            for i in 0..WAVE_PTS {
+                let l = src[i.saturating_sub(1)];
+                let r = src[(i + 1).min(WAVE_PTS - 1)];
+                pts[i] = l * 0.25 + src[i] * 0.5 + r * 0.25;
             }
         }
         // 3) Normalize, then scale up BOLD (loudness-pulsed) around a raised base
@@ -316,9 +323,14 @@ impl Breakout {
         let base = PADDLE_BASE_Y + 1.05;
         let st = (dt * 7.0).min(1.0);
         let mut moved = 0.0f32;
+        const TAPER: f32 = 0.12;
         for i in 0..WAVE_PTS {
             let f = i as f32 / (WAVE_PTS - 1) as f32;
-            let target = (base + pts[i] * amp).max(PADDLE_FLOOR);
+            // Ease the amplitude to zero at both ends so the wave mounts cleanly
+            // to the court walls instead of cutting off (no edge spike).
+            let edge = (f / TAPER).min((1.0 - f) / TAPER).clamp(0.0, 1.0);
+            let edge = edge * edge * (3.0 - 2.0 * edge); // smoothstep
+            let target = (base + pts[i] * amp * edge).max(PADDLE_FLOOR);
             let delta = (target - self.paddle_y[i]) * st;
             self.paddle_y[i] += delta;
             moved = moved.max(delta.abs());
@@ -555,7 +567,8 @@ impl Mode for Breakout {
                 continue;
             }
             let e = feat.bands[b.band];
-            let c = mix(b.color, spec(), (e * 0.4).min(0.45));
+            // Resolve the brick color from the LIVE theme so a switch re-skins it.
+            let c = mix(mix(teal_deep(), teal(), b.shade), spec(), (e * 0.4).min(0.45));
             let (hw, hh) = (b.hw * b.anim, b.hh * b.anim);
             let (x, y_top, w, h) = (b.x - hw, b.y + hh, hw * 2.0, hh * 2.0);
             v.rect(x, y_top, w, h, c);
