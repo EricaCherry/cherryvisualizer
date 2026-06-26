@@ -55,10 +55,9 @@ pub struct Analyser {
     spectrum: Vec<Complex<f32>>,
     scratch: Vec<Complex<f32>>,
     fft_len: usize,
+    /// Per-band EMA of the linear magnitude — the AnalyserNode smoothingTimeConstant.
     smoothed: [f32; N_BANDS],
-    /// Adaptive references (running peaks) for auto-gain, so the visuals respond
-    /// to ANY track's level, not just the synthetic demo they were tuned to.
-    band_ref: f32,
+    /// Adaptive loudness reference (running peak) so rms responds to any track level.
     loud_ref: f32,
 }
 
@@ -74,7 +73,7 @@ impl Analyser {
                 0.5 * (1.0 - (2.0 * std::f32::consts::PI * i as f32 / (fft_len - 1) as f32).cos())
             })
             .collect();
-        Analyser { fft, hann, input, spectrum, scratch, fft_len, smoothed: [0.0; N_BANDS], band_ref: 0.01, loud_ref: 0.05 }
+        Analyser { fft, hann, input, spectrum, scratch, fft_len, smoothed: [0.0; N_BANDS], loud_ref: 0.05 }
     }
 
     /// Analyze one window. `dt` drives the visual release-smoothing of bands.
@@ -127,7 +126,6 @@ impl Analyser {
         let f_max = (sr / 2.0).min(13_000.0);
         let (lmin, lmax) = (f_min.log2(), f_max.log2());
         let mut raw = [0.0f32; N_BANDS];
-        let mut frame_max = 0.0f32;
         for b in 0..N_BANDS {
             let lo = 2f32.powf(lmin + (b as f32 / N_BANDS as f32) * (lmax - lmin));
             let hi = 2f32.powf(lmin + ((b + 1) as f32 / N_BANDS as f32) * (lmax - lmin));
@@ -137,24 +135,21 @@ impl Analyser {
                 peak = peak.max(self.spectrum[k].norm());
             }
             raw[b] = peak * 2.0 / self.fft_len as f32;
-            frame_max = frame_max.max(raw[b]);
         }
 
-        // Adaptive band gain: drive strong-but-not-peak bands to full so real
-        // (broadband) music fills the range, with a near-linear curve that keeps
-        // loud and quiet bands visibly different. The release is near-transparent
-        // (~0.1s) so each mode owns its own fall instead of stacking on a slow one.
-        // band_ref floored at 0.004 (not 0.0012) caps worst-case noise gain at
-        // ~300x instead of ~1000x; instant attack with a ~0.18s fall (release 5.5)
-        // reads as snappy AND clean instead of strobing on single-frame noise.
-        self.band_ref = frame_max.max(self.band_ref * rel).max(0.004);
-        let band_gain = 1.2 / self.band_ref;
-        let release = (-dt * 5.5).exp();
+        // Web-Audio AnalyserNode model: ONE EMA on the linear magnitude
+        // (smoothingTimeConstant), then a fixed dB window mapped to 0..1. The log
+        // (dB) scale is what makes bars read full and clean; the MIN_DB floor
+        // doubles as the noise gate (content below it maps to 0). No running-peak
+        // auto-gain and no gamma — those over-processed it into laggy mush.
+        const MIN_DB: f32 = -76.0;
+        const MAX_DB: f32 = -18.0;
+        const BAND_TC: f32 = 0.5; // smoothingTimeConstant (light; modes add their own)
         let mut bands = [0.0f32; N_BANDS];
         for b in 0..N_BANDS {
-            let target = (raw[b] * band_gain).min(1.0).powf(0.85) * gate;
-            self.smoothed[b] = target.max(self.smoothed[b] * release);
-            bands[b] = self.smoothed[b];
+            self.smoothed[b] = BAND_TC * self.smoothed[b] + (1.0 - BAND_TC) * raw[b];
+            let db = 20.0 * (self.smoothed[b] + 1e-9).log10();
+            bands[b] = ((db - MIN_DB) / (MAX_DB - MIN_DB)).clamp(0.0, 1.0);
         }
 
         // Broad bands derived from the normalized spectrum (already adaptive,

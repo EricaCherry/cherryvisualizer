@@ -34,8 +34,8 @@ impl Radial {
             flash: 0.0,
             mid_s: 0.0,
             last_hero: 0,
-            gain: 1.4,
-            smooth: 0.30,
+            gain: 1.0,
+            smooth: 0.5,
             inner: 1.7,
             focus: 0.0,
         }
@@ -90,15 +90,11 @@ impl Mode for Radial {
         // Smooth the rotation driver so the spin doesn't twitch on band jitter.
         self.mid_s += (ctx.feat.mid - self.mid_s) * (1.0 - (-dt / 0.15).exp());
         self.rot += dt * (0.05 + self.mid_s * 0.4);
-        // Snappy rise (~45ms), knob-controlled fall — thin spokes have no width to
-        // average jitter, so the dt-based envelope matters more here than Spectrum.
-        let att = 1.0 - (-dt / 0.045).exp();
-        let rel_tau = 0.06 + self.smooth.clamp(0.0, 0.95) * 0.45;
-        let rel = 1.0 - (-dt / rel_tau).exp();
+        // ONE symmetric EMA — the Web-Audio smoothingTimeConstant (Smoothing slider).
+        let tc = self.smooth.clamp(0.0, 0.95);
+        let k = 1.0 - tc.powf(dt * 60.0);
         for i in 0..N_BANDS {
-            let raw = (focus_band(&ctx.feat.bands, i, self.focus) * self.gain).min(1.0);
-            let target = ((raw - 0.06).max(0.0) / 0.94).min(1.0);
-            let k = if target > self.heights[i] { att } else { rel };
+            let target = (focus_band(&ctx.feat.bands, i, self.focus) * self.gain).min(1.0);
             self.heights[i] += (target - self.heights[i]) * k;
             if self.heights[i] >= self.caps[i] {
                 self.caps[i] = self.heights[i];

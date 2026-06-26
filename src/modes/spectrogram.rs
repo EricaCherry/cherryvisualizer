@@ -92,10 +92,9 @@ impl Mode for Spectrogram {
             // so sustained loud bass settles to teal and the quiet noise stays ink.
             self.env[i] += (raw - self.env[i]) * 0.05;
             col[i] = ((raw - 0.3 * self.env[i] - 0.05).max(0.0) * 1.4).min(1.0);
-            // Pre-smooth (40 ms rise / 120 ms fall) before the column is frozen
-            // into the scroll, so a one-frame noise blip can't streak across it.
-            let tc = if col[i] > self.disp[i] { 1.0 - (-dt / 0.04).exp() } else { 1.0 - (-dt / 0.12).exp() };
-            self.disp[i] += (col[i] - self.disp[i]) * tc;
+            // One light EMA before the column is frozen into the scroll, so a
+            // single-frame blip can't streak across it.
+            self.disp[i] += (col[i] - self.disp[i]) * (1.0 - (-dt / 0.07).exp());
         }
         self.cols.push_back(self.disp);
         while self.cols.len() > self.width {

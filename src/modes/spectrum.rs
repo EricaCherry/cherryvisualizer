@@ -36,8 +36,8 @@ impl Spectrum {
             cap_vel: [0.0; N_BANDS],
             flash: 0.0,
             last_hero: 0,
-            gain: 1.35,
-            smooth: 0.30,
+            gain: 1.0,
+            smooth: 0.5,
             gap: 0.22,
             focus: 0.0,
         }
@@ -91,16 +91,13 @@ impl Mode for Spectrum {
                 self.flash = self.flash.max((s * 0.22).min(0.6));
             }
         }
-        // Snappy rise (~45ms), knob-controlled fall (60..510ms) — dt-based so
-        // 30 fps export matches 60 fps live. The Focus param zooms into the mids.
-        let att = 1.0 - (-dt / 0.045).exp();
-        let rel_tau = 0.06 + self.smooth.clamp(0.0, 0.95) * 0.45;
-        let rel = 1.0 - (-dt / rel_tau).exp();
+        // ONE symmetric EMA — the Web-Audio AnalyserNode smoothingTimeConstant.
+        // The "Smoothing" slider IS that constant (0 = raw/snappy, 0.9 = glassy).
+        // `tc^(dt*60)` keeps it frame-rate independent (30fps export == 60fps live).
+        let tc = self.smooth.clamp(0.0, 0.95);
+        let k = 1.0 - tc.powf(dt * 60.0);
         for i in 0..N_BANDS {
-            let raw = (focus_band(&ctx.feat.bands, i, self.focus) * self.gain).min(1.0);
-            // Display floor so amplified silence stays dark.
-            let target = ((raw - 0.06).max(0.0) / 0.94).min(1.0);
-            let k = if target > self.heights[i] { att } else { rel };
+            let target = (focus_band(&ctx.feat.bands, i, self.focus) * self.gain).min(1.0);
             self.heights[i] += (target - self.heights[i]) * k;
             // Peak cap: snaps up to the bar, then falls under gravity.
             if self.heights[i] >= self.caps[i] {
