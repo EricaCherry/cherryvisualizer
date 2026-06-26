@@ -59,6 +59,19 @@ pub struct Surfer {
     sparkles: Vec<Sparkle>,
     prev_collected: usize,
     cam_kick: f32,
+    // Smoothed followers — every per-frame camera/pose quantity is low-passed in
+    // update() so the ride glides instead of popping on beats / snapping on
+    // obstacle entry. draw() reads only these.
+    cam_kick_s: f32,
+    fov_s: f32,
+    bank_s: f32,
+    px_s: f32,
+    py_s: f32,
+    spin_s: f32,
+    roll_s: f32,
+    squash_s: f32,
+    leg_s: f32,
+    run_phase: f32,
 }
 
 impl Surfer {
@@ -71,6 +84,16 @@ impl Surfer {
             sparkles: Vec::new(),
             prev_collected: 0,
             cam_kick: 0.0,
+            cam_kick_s: 0.0,
+            fov_s: 58.0,
+            bank_s: 0.0,
+            px_s: 0.0,
+            py_s: 0.0,
+            spin_s: 0.0,
+            roll_s: 0.0,
+            squash_s: 1.0,
+            leg_s: 1.0,
+            run_phase: 0.0,
         }
     }
 
@@ -325,14 +348,66 @@ impl Mode for Surfer {
         self.sparkles.clear();
         self.prev_collected = 0;
         self.cam_kick = 0.0;
+        self.cam_kick_s = 0.0;
+        self.fov_s = 58.0;
+        self.bank_s = 0.0;
+        self.px_s = 0.0;
+        self.py_s = 0.0;
+        self.spin_s = 0.0;
+        self.roll_s = 0.0;
+        self.squash_s = 1.0;
+        self.leg_s = 1.0;
+        self.run_phase = 0.0;
     }
 
     fn update(&mut self, ctx: &FrameCtx) {
         let dt = ctx.dt;
-        self.cam_kick = (self.cam_kick - dt * 3.0).max(0.0);
+        // Beats add an impulse into a fast-decaying envelope; the camera reads a
+        // low-passed FOLLOWER of it, so a beat nudges instead of popping.
+        self.cam_kick = (self.cam_kick - dt * 4.0).max(0.0);
         if let Some(s) = ctx.feat.beat {
-            self.cam_kick = (s * 0.12).min(0.4);
+            self.cam_kick = (self.cam_kick + s * 0.10).min(0.35);
         }
+        self.cam_kick_s += (self.cam_kick - self.cam_kick_s) * (1.0 - (-dt * 12.0).exp());
+
+        // Smooth every per-frame camera/pose quantity here (draw() takes &self).
+        let d_now = self.dist_at(ctx.time);
+        let px = self.weave(d_now);
+        let py = self.surface_y(d_now);
+        // A wider finite-difference stencil + a hard low-pass kills bank jitter.
+        let raw_bank = ((self.weave(d_now + 1.5) - self.weave(d_now - 1.5)) * 0.05).clamp(-0.10, 0.10);
+        let raw_fov = 58.0 + ctx.feat.rms * 9.0 + self.cam_kick_s * 14.0;
+        let ks = 1.0 - (-dt * 10.0).exp();
+        self.px_s += (px - self.px_s) * ks;
+        self.py_s += (py - self.py_s) * ks;
+        self.bank_s += (raw_bank - self.bank_s) * (1.0 - (-dt * 6.0).exp());
+        self.fov_s += (raw_fov - self.fov_s) * (1.0 - (-dt * 8.0).exp());
+        // Pose targets from the active obstacle, eased so the creature morphs
+        // continuously instead of snapping at the window edges.
+        let (mut tspin, mut troll, mut tsq, mut tleg) = (0.0f32, 0.0f32, 1.0f32, 1.0f32);
+        if let Some((e, k)) = self.active_event(d_now) {
+            let ss = k * k * (3.0 - 2.0 * k);
+            let bump = (k * std::f32::consts::PI).sin();
+            let mut apply = |kind: Kind| match kind {
+                Kind::Loop => tspin += std::f32::consts::TAU * ss,
+                Kind::Wave => {
+                    troll += std::f32::consts::TAU * ss;
+                    tsq *= 1.0 - 0.4 * bump;
+                }
+                Kind::Pit => tleg *= 1.0 + bump,
+                Kind::Block => {}
+            };
+            apply(e.kind);
+            if let Some(d2) = e.double {
+                apply(d2);
+            }
+        }
+        self.spin_s += (tspin - self.spin_s) * ks;
+        self.roll_s += (troll - self.roll_s) * ks;
+        self.squash_s += (tsq - self.squash_s) * ks;
+        self.leg_s += (tleg - self.leg_s) * ks;
+        // Run cycle advances smoothly (decoupled from absolute distance).
+        self.run_phase += dt * BASE_SPEED * 1.1;
 
         // Coins collected since last frame -> sparkles where they were.
         let collected = self.coins.partition_point(|c| c.t <= ctx.time);
@@ -371,9 +446,10 @@ impl Mode for Surfer {
         let sky_top = style::ink();
         let coin = style::amber();
         let d_now = self.dist_at(t);
-        let px = self.weave(d_now);
-        let py = self.surface_y(d_now);
-        let bank = ((self.weave(d_now + 1.0) - self.weave(d_now - 1.0)) * 0.06).clamp(-0.12, 0.12);
+        // Smoothed followers (updated in update()) — the ride glides.
+        let px = self.px_s;
+        let py = self.py_s;
+        let bank = self.bank_s;
 
         // ================= 2D backdrop (drawn before the 3D pass) ============
         view::apply_screen_camera();
@@ -414,8 +490,8 @@ impl Mode for Surfer {
         draw_rectangle(0.0, horizon_y, sw, sh - horizon_y, HORIZON);
 
         // ================= 3D pass ===========================================
-        let fov = (58.0 + feat.rms * 9.0 + self.cam_kick * 14.0).to_radians();
-        let cam_pos = vec3(px * 0.7, 2.7 + py * 0.25 + self.cam_kick * 0.12, 5.4);
+        let fov = self.fov_s.to_radians();
+        let cam_pos = vec3(px * 0.7, 2.7 + py * 0.25 + self.cam_kick_s * 0.12, 5.4);
         set_camera(&Camera3D {
             position: cam_pos,
             target: vec3(px * 0.85, 1.1 + py * 0.45, -8.0),
@@ -549,31 +625,12 @@ impl Mode for Surfer {
             draw_cube(vec3(s.x, s.y, z), vec3(0.07, 0.07, 0.07) * k, None, fog(Color::new(0.98, 0.85, 0.45, 1.0), -z));
         }
 
-        // ---- the avatar: a low-poly runner that jumps / spins / rolls -------
-        // Pose is a pure function of the obstacle it's clearing.
-        let mut spin_a = 0.0f32;
-        let mut roll_a = 0.0f32;
-        let mut squash = 1.0f32;
-        let mut leg = 1.0f32;
-        if let Some((e, k)) = self.active_event(d_now) {
-            let ss = k * k * (3.0 - 2.0 * k);
-            let bump = (k * std::f32::consts::PI).sin();
-            let mut apply = |kind: Kind| match kind {
-                Kind::Loop => spin_a += std::f32::consts::TAU * ss,
-                Kind::Wave => {
-                    roll_a += std::f32::consts::TAU * ss;
-                    squash *= 1.0 - 0.4 * bump;
-                }
-                Kind::Pit => leg *= 1.0 + bump,
-                Kind::Block => {}
-            };
-            apply(e.kind);
-            if let Some(d2) = e.double {
-                apply(d2);
-            }
-        }
-        let grounded = py <= 0.05 && spin_a == 0.0 && roll_a == 0.0;
-        let run = (d_now * 2.2 * std::f32::consts::PI).sin();
+        // ---- the avatar: a line-art creature that jumps / spins / rolls -----
+        // Pose comes from the smoothed followers (eased in update()), so it morphs
+        // continuously through obstacles instead of snapping.
+        let (spin_a, roll_a, squash, leg) = (self.spin_s, self.roll_s, self.squash_s, self.leg_s);
+        let grounded = py <= 0.05 && spin_a.abs() < 0.01 && roll_a.abs() < 0.01;
+        let run = self.run_phase.sin();
         let bob = if grounded { run.abs() * 0.05 } else { 0.0 };
         let pivot = vec3(px, py + bob + 0.95, 0.0);
 
