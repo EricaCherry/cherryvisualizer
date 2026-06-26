@@ -19,14 +19,13 @@ const NPTS: usize = 300;
 
 pub struct Scope {
     history: VecDeque<Vec<f32>>,
-    rms_s: f32, // smoothed loudness driver (snappy but not jittery)
     amp: f32,
     persist: usize,
 }
 
 impl Scope {
     pub fn new() -> Self {
-        Scope { history: VecDeque::new(), rms_s: 0.0, amp: 2.6, persist: 16 }
+        Scope { history: VecDeque::new(), amp: 2.6, persist: 16 }
     }
 
     fn sample(wave: &[f32]) -> Vec<f32> {
@@ -79,17 +78,17 @@ impl Mode for Scope {
     }
 
     fn update(&mut self, ctx: &FrameCtx) {
-        self.rms_s += (ctx.feat.rms - self.rms_s) * (1.0 - (-ctx.dt / 0.08).exp());
         self.history.push_back(Self::sample(ctx.wave));
         while self.history.len() > self.persist {
             self.history.pop_front();
         }
     }
 
-    fn draw(&self, _ctx: &FrameCtx) {
+    fn draw(&self, ctx: &FrameCtx) {
         let v = View::fit_world(AW, AH);
+        let rms = ctx.feat.rms;
         let cy = AH * 0.46; // off dead-center; dark space above and below
-        let amp = self.amp * (0.28 + self.rms_s * 1.4);
+        let amp = self.amp * (0.28 + rms * 1.4);
 
         // Dim reference line — kept faint so it doesn't pull the eye back to
         // center against the deliberately off-center band.
@@ -109,7 +108,7 @@ impl Mode for Scope {
                 let y1 = (cy + row[i] * amp).clamp(0.3, AH - 0.3);
                 // Only the very loudest crests tip amber (tighter amber discipline).
                 let mag = row[i - 1].abs().max(row[i].abs());
-                let hot = smoothstep(0.70, 0.98, mag * (0.6 + self.rms_s));
+                let hot = smoothstep(0.70, 0.98, mag * (0.6 + rms));
                 let c = mix(teal(), amber(), hot);
                 v.line(x0, y0, x1, y1, width, with_alpha(c, fade));
             }

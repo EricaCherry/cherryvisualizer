@@ -18,7 +18,7 @@ use macroquad::prelude::*;
 use crate::material3d;
 use crate::modes::course::{Ev, Kind, build_course};
 use crate::modes::{Category, FrameCtx, Mode};
-use crate::style::{self, amber, amber_glow, grade, hash01, mix, spec, teal};
+use crate::style::{self, amber, grade, hash01, mix, spec, teal};
 use crate::track::Track;
 use crate::view;
 
@@ -476,11 +476,6 @@ impl Mode for Surfer {
             let a = (0.08 + 0.32 * feat.treble) * tw;
             draw_rectangle(x, y, star_px, star_px, Color::new(spec().r, spec().g, spec().b, a));
         }
-        let sun_r = sh * (0.115 + 0.03 * feat.bass);
-        let (sx, sy) = (sw * 0.62, horizon_y * 0.84);
-        draw_circle(sx, sy, sun_r, Color::new(amber().r, amber().g, amber().b, 0.92));
-        draw_circle(sx, sy, sun_r * 0.66, Color::new(amber_glow().r, amber_glow().g, amber_glow().b, 0.95));
-        draw_circle(sx, sy, sun_r * 0.34, Color::new(spec().r, spec().g, spec().b, 0.9));
         let n = feat.bands.len();
         let bw = sw / n as f32;
         for (i, &e) in feat.bands.iter().enumerate() {

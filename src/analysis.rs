@@ -61,6 +61,9 @@ pub struct Analyser {
     /// Per-BIN EMA of the linear magnitude — the AnalyserNode smoothingTimeConstant,
     /// the ONLY smoothing in the pipeline (audioMotion order: smooth bins, then band).
     smoothed: Vec<f32>,
+    /// One EMA on the loudness so the rms-driven modes (scope/vinyl/tunnel) read a
+    /// smooth value directly instead of each re-smoothing it themselves.
+    rms_s: f32,
 }
 
 impl Analyser {
@@ -76,7 +79,7 @@ impl Analyser {
             })
             .collect();
         let n_bins = spectrum.len();
-        Analyser { fft, hann, input, spectrum, scratch, fft_len, smoothed: vec![0.0; n_bins] }
+        Analyser { fft, hann, input, spectrum, scratch, fft_len, smoothed: vec![0.0; n_bins], rms_s: 0.0 }
     }
 
     /// Analyze one window. `dt` drives the visual release-smoothing of bands.
@@ -133,7 +136,9 @@ impl Analyser {
             sum_sq += s * s;
         }
         let rms_lin = (sum_sq / n.max(1) as f32).sqrt();
-        let rms = ((20.0 * (rms_lin + 1e-9).log10() + 60.0) / 60.0).clamp(0.0, 1.0);
+        let rms_raw = ((20.0 * (rms_lin + 1e-9).log10() + 60.0) / 60.0).clamp(0.0, 1.0);
+        self.rms_s += (rms_raw - self.rms_s) * 0.4; // one EMA (the only loudness smoothing)
+        let rms = self.rms_s;
 
         // Broad bands derived from the normalized spectrum (already adaptive,
         // balance preserved). Boundaries from the log map (~250 Hz, ~2 kHz).

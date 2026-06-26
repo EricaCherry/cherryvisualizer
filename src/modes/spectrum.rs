@@ -11,7 +11,7 @@ use macroquad::prelude::*;
 
 use crate::analysis::N_BANDS;
 use crate::modes::{FrameCtx, Mode, Param};
-use crate::style::{amber, hash01, mix, smoothstep, spec, teal, teal_deep, with_alpha};
+use crate::style::{grade, hash01, mix, spec, teal_deep, with_alpha};
 use crate::track::Track;
 use crate::view::{View, AH, AW};
 
@@ -20,7 +20,6 @@ pub struct Spectrum {
     caps: [f32; N_BANDS],
     cap_vel: [f32; N_BANDS],
     flash: f32,
-    last_hero: usize,
     gap: f32, // cosmetic bar spacing (audioMotion barSpace)
 }
 
@@ -31,7 +30,6 @@ impl Spectrum {
             caps: [0.0; N_BANDS],
             cap_vel: [0.0; N_BANDS],
             flash: 0.0,
-            last_hero: 0,
             gap: 0.22,
         }
     }
@@ -88,24 +86,13 @@ impl Mode for Spectrum {
                 self.caps[i] = (self.caps[i] + self.cap_vel[i] * dt).max(self.heights[i]);
             }
         }
-        // Hero = loudest INNER band, with hysteresis so the amber flash doesn't
-        // strobe between two near-equal bands.
-        let cand = (2..N_BANDS - 2).max_by(|&a, &b| self.heights[a].total_cmp(&self.heights[b])).unwrap_or(2);
-        if self.heights[cand] > self.heights[self.last_hero] * 1.15 {
-            self.last_hero = cand;
-        }
     }
 
     fn draw(&self, _ctx: &FrameCtx) {
         let v = View::fit_world(AW, AH);
         if self.flash > 0.001 {
-            // Beats breathe the cool body faintly; amber stays reserved for the
-            // hero, so the negative space never warms.
             v.rect(0.0, AH, AW, AH, with_alpha(teal_deep(), self.flash * 0.05));
         }
-
-        // The hero is the single loudest band (chosen with hysteresis in update).
-        let hero = self.last_hero;
 
         let base = AH * 0.42; // off-center baseline -> asymmetric negative space
         let max_h = AH * 0.50; // keep full-scale bars (+ caps) inside the 16x9 world
@@ -125,32 +112,19 @@ impl Mode for Spectrum {
             let bx = x + (slot - bw) * 0.5;
             let by = base + (hash01(i as i32 * 13 + 3) - 0.5) * 0.05 * AH; // baseline jitter
             let h = (e * max_h).max(0.012);
-            let hero_bar = i == hero && e > 0.05;
 
-            // Body is one cool family separated by brightness; only the hero
-            // bar tips toward amber as it gets loud.
-            let mut c = mix(teal_deep(), teal(), smoothstep(0.04, 0.78, e));
-            if hero_bar {
-                c = mix(c, amber(), smoothstep(0.30, 0.95, e));
-            }
+            // Every bar is coloured by its OWN level (energy = colour): quiet teal,
+            // loud warms to amber — a consistent gradient, no special "hero" bar.
+            let c = grade(0.12 + e * 0.82);
+            let a = 0.4 + 0.6 * e;
+            v.rect(bx, by, bw, (h * 0.16).min(0.45), with_alpha(c, 0.10 * a)); // underglow
+            v.rect(bx, by + h, bw, h, with_alpha(c, a)); // the bar
+            v.rect(bx, by + h, bw, (h * 0.10).min(0.10), with_alpha(mix(c, spec(), 0.30), a)); // tip
 
-            // Quiet bars recede toward the backdrop so the loud (and hero) bars
-            // own the value; the hero stays fully solid.
-            let bar_a = if hero_bar { 1.0 } else { 0.35 + 0.65 * e };
-            // Short graded underglow (replaces the stacked-alpha mirror).
-            v.rect(bx, by, bw, (h * 0.16).min(0.45), with_alpha(c, 0.10 * bar_a));
-            // The bar.
-            v.rect(bx, by + h, bw, h, with_alpha(c, bar_a));
-            // Tip lifted within the bar's own family (no white).
-            v.rect(bx, by + h, bw, (h * 0.10).min(0.10), with_alpha(mix(c, spec(), 0.30), bar_a));
-
-            // Caps: dim teal ticks, except the hero = amber cap + cream tip.
-            let cap = self.caps[i] * max_h;
-            if hero_bar {
-                v.rect(bx, by + cap + 0.10, bw, 0.07, amber());
-                v.rect(bx + bw * 0.28, by + cap + 0.18, bw * 0.44, 0.05, spec());
-            } else if e > 0.02 {
-                v.rect(bx, by + cap + 0.08, bw, 0.045, with_alpha(teal(), 0.5));
+            // Peak-hold cap, same colour family (no amber dot).
+            if e > 0.02 {
+                let cap = self.caps[i] * max_h;
+                v.rect(bx, by + cap + 0.08, bw, 0.05, with_alpha(grade(0.12 + self.caps[i] * 0.82), 0.7));
             }
 
             x += slot;

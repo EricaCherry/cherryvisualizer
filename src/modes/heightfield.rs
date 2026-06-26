@@ -60,21 +60,6 @@ impl HeightField {
         }
     }
 
-    /// World ground height at lateral `x` and forward distance `zb` metres in
-    /// front of the `near` plane (used to float a vehicle over the surface).
-    pub fn height_at(&self, x: f32, zb: f32, terrain_w: f32, depth: f32, height: f32) -> f32 {
-        let rs = depth / ROWS as f32;
-        let n = self.rows.len();
-        let fi = (zb / rs - self.scroll).clamp(0.0, (n - 1) as f32);
-        let fj = ((x / terrain_w + 0.5) * (COLS - 1) as f32).clamp(0.0, (COLS - 1) as f32);
-        let (i0, j0) = (fi.floor() as usize, fj.floor() as usize);
-        let (i1, j1) = ((i0 + 1).min(n - 1), (j0 + 1).min(COLS - 1));
-        let (ti, tj) = (fi - i0 as f32, fj - j0 as f32);
-        let a = self.rows[i0][j0] * (1.0 - tj) + self.rows[i0][j1] * tj;
-        let b = self.rows[i1][j0] * (1.0 - tj) + self.rows[i1][j1] * tj;
-        (a * (1.0 - ti) + b * ti) * height
-    }
-
     /// Build the lit heightmap mesh (per-vertex world normals + scrolling UVs).
     /// The mesh spans `terrain_w` wide and recedes from `near` over `depth`, with
     /// energy scaled to `height`. Bind a material around the returned mesh.

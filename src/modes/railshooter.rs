@@ -18,7 +18,6 @@ use macroquad::prelude::*;
 
 use crate::material3d;
 use crate::modes::course::{Kind, build_course};
-use crate::modes::heightfield::HeightField;
 use crate::modes::{Category, FrameCtx, Mode, Param};
 use crate::style::{self, amber, amber_glow, hash01, ink, mix, slate, spec, teal, teal_deep, with_alpha};
 use crate::track::Track;
@@ -32,10 +31,6 @@ const LEAD: f32 = 0.36; // laser flight time: fire this early so it hits on the 
 const KILL_AHEAD: f32 = 11.0; // enemies die this far in front of the ship
 const ROLL_DUR: f32 = 0.72;
 const COURSE_GAP: f32 = 14.0; // min obstacle spacing (m); exceeds one action's travel
-// The ground is the shared audio Terrain — the ship flies over the music landscape.
-const T_WIDTH: f32 = 19.0; // terrain width (wider than the flight lane)
-const T_NEAR: f32 = 6.0; // terrain front plane (just behind the camera)
-const T_HEIGHT: f32 = 4.2; // ridge height
 
 struct Enemy {
     d: f32,
@@ -104,9 +99,6 @@ pub struct RailShooter {
     prev_dead: usize,
     cam_kick: f32,
     flash: f32,
-    terrain: HeightField,    // the audio landscape the ship flies over
-    ground_cam_s: f32,       // smoothed ground height under the camera
-    ground_ship_s: f32,      // smoothed ground height under the ship
     // live-tunable
     p_fire: f32,
     p_density: f32,
@@ -130,9 +122,6 @@ impl RailShooter {
             prev_dead: 0,
             cam_kick: 0.0,
             flash: 0.0,
-            terrain: HeightField::new(),
-            ground_cam_s: 0.0,
-            ground_ship_s: 0.0,
             p_fire: 1.0,
             p_density: 1.0,
             p_roll: 1.0,
@@ -338,9 +327,6 @@ impl Mode for RailShooter {
         self.prev_dead = 0;
         self.cam_kick = 0.0;
         self.flash = 0.0;
-        self.terrain.reset();
-        self.ground_cam_s = 0.0;
-        self.ground_ship_s = 0.0;
     }
 
     fn update(&mut self, ctx: &FrameCtx) {
@@ -351,17 +337,6 @@ impl Mode for RailShooter {
         if let Some(s) = ctx.feat.beat {
             self.cam_kick = (s * 0.12).min(0.4);
         }
-
-        // Scroll the shared audio terrain at flight pace and float the camera +
-        // ship over its surface — EMA-smoothed so a ridge nudges the altitude
-        // instead of bouncing the camera.
-        self.terrain.update(&ctx.feat.bands, dt, BASE_SPEED * 0.55);
-        let px = self.ship_x(t);
-        let gc = self.terrain.height_at(px * 0.7, T_NEAR - 5.4, T_WIDTH, FAR, T_HEIGHT);
-        let gs = self.terrain.height_at(px * 0.85, T_NEAR + 1.4, T_WIDTH, FAR, T_HEIGHT);
-        let gk = 1.0 - (-dt * 8.0).exp();
-        self.ground_cam_s += (gc - self.ground_cam_s) * gk;
-        self.ground_ship_s += (gs - self.ground_ship_s) * gk;
 
         // Enemies whose hit moment just passed -> spawn debris + a shockwave.
         let dead = self.enemies.partition_point(|e| e.hit_t <= t);
@@ -431,12 +406,6 @@ impl Mode for RailShooter {
             let tw = 0.5 + 0.5 * ((t * (1.0 + hash01(i) * 3.0) + i as f32).sin());
             draw_rectangle(x, y, star_px, star_px, with_alpha(spec(), (0.06 + 0.34 * feat.treble) * tw));
         }
-        // A planet/sun swelling with bass, off-center.
-        let sun_r = sh * (0.10 + 0.03 * feat.bass);
-        let (sx, sy) = (sw * 0.66, sh * 0.30);
-        draw_circle(sx, sy, sun_r, with_alpha(amber(), 0.85));
-        draw_circle(sx, sy, sun_r * 0.7, with_alpha(amber_glow(), 0.9));
-        draw_circle(sx, sy, sun_r * 0.34, with_alpha(spec(), 0.85));
         // Far asteroid-belt silhouette = the spectrum.
         let bw = sw / feat.bands.len() as f32;
         for (i, &e) in feat.bands.iter().enumerate() {
@@ -447,10 +416,10 @@ impl Mode for RailShooter {
         // ================= 3D pass ===========================================
         let fov = (60.0 + feat.rms * 10.0 + self.cam_kick * 14.0).to_radians();
         let up = vec3((roll + bank).sin(), (roll + bank).cos(), 0.0).normalize();
-        let cam_pos = vec3(px * 0.7, self.ground_cam_s + 2.3 + self.cam_kick * 0.12, 5.4);
+        let cam_pos = vec3(px * 0.7, 2.3 + self.cam_kick * 0.12, 5.4);
         set_camera(&Camera3D {
             position: cam_pos,
-            target: vec3(px * 0.85, self.ground_ship_s + 1.05, -8.0),
+            target: vec3(px * 0.85, 1.05, -8.0),
             up,
             fovy: fov,
             aspect: Some(view::screen_w() / view::screen_h()),
@@ -458,29 +427,58 @@ impl Mode for RailShooter {
             ..Default::default()
         });
 
-        // The ground IS the audio terrain (the same HeightField as the Terrain
-        // visualizer) — the ship flies over the music landscape, lit greeble.
-        let (tv, ti) = self.terrain.build_mesh(T_WIDTH, T_NEAR, FAR, T_HEIGHT);
+        // Corridor floor + breathing walls — explicit meshes carrying real
+        // normals, drawn through the PBR panel material (greeble normal map, lit
+        // and fogged in-shader). UVs bake in the tiling so one draw covers the
+        // whole run; the wall height breathes with the bass.
+        let floor_c = mix(teal_deep(), teal(), 0.18);
+        let wall_c = mix(slate(), teal_deep(), 0.3);
+        let wall_h = 4.0 * (0.7 + 0.5 * feat.bass);
+        let (zn, zf) = (6.0f32, -FAR);
+        let vz = 0.12; // along-corridor tiling rate
+        let mut cv: Vec<Vertex> = Vec::with_capacity(12);
+        let mut ci: Vec<u16> = Vec::new();
+        let mut quad = |c: [Vec3; 4], uv: [(f32, f32); 4], nrm: Vec3, col: Color| {
+            let b = cv.len() as u16;
+            for k in 0..4 {
+                let mut v = Vertex::new(c[k].x, c[k].y, c[k].z, uv[k].0, uv[k].1, col);
+                v.normal = vec4(nrm.x, nrm.y, nrm.z, 0.0);
+                cv.push(v);
+            }
+            ci.extend_from_slice(&[b, b + 1, b + 2, b, b + 2, b + 3]);
+        };
+        quad(
+            [vec3(-ROAD_HALF, -0.6, zn), vec3(ROAD_HALF, -0.6, zn), vec3(ROAD_HALF, -0.6, zf), vec3(-ROAD_HALF, -0.6, zf)],
+            [(0.0, -zn * vz), (3.0, -zn * vz), (3.0, -zf * vz), (0.0, -zf * vz)],
+            vec3(0.0, 1.0, 0.0),
+            floor_c,
+        );
+        for side in [-1.0f32, 1.0] {
+            let xw = side * (ROAD_HALF + 0.05);
+            let (yb, yt) = (-0.6, wall_h - 0.6);
+            quad(
+                [vec3(xw, yb, zn), vec3(xw, yt, zn), vec3(xw, yt, zf), vec3(xw, yb, zf)],
+                [(0.0, -zn * vz), (1.5, -zn * vz), (1.5, -zf * vz), (0.0, -zf * vz)],
+                vec3(-side, 0.0, 0.0),
+                wall_c,
+            );
+        }
         material3d::bind(
             material3d::Surface::Panel,
             &material3d::LitParams {
                 cam: cam_pos,
                 light_dir: vec3(-0.3, -0.7, -0.5),
-                light_color: { let c = mix(teal(), spec(), 0.5); vec3(c.r, c.g, c.b) * 1.2 },
-                ambient: { let s = mix(slate(), teal_deep(), 0.4); vec3(s.r, s.g, s.b) * 0.9 },
+                light_color: { let c = mix(teal(), spec(), 0.6); vec3(c.r, c.g, c.b) * 1.3 },
+                ambient: { let s = mix(slate(), teal_deep(), 0.4); vec3(s.r, s.g, s.b) * 0.95 },
                 horizon: mix(ink(), slate(), 0.7),
-                metal: 0.4,
-                rough: 0.95,
-                tile: vec2(2.0, 1.0),
+                metal: 0.6,
+                rough: 0.9,
+                tile: vec2(1.0, 1.0),
                 pulse: feat.bass * 0.5 + feat.beat.unwrap_or(0.0) * 0.4,
             },
         );
-        draw_mesh(&Mesh { vertices: tv, indices: ti, texture: None });
+        draw_mesh(&Mesh { vertices: cv, indices: ci, texture: None });
         material3d::unbind();
-
-        // Ground height under a point at world (x, z) — used to float everything
-        // ABOVE the terrain ridges so nothing clips into the landscape.
-        let gy = |x: f32, z: f32| self.terrain.height_at(x, T_NEAR - z, T_WIDTH, FAR, T_HEIGHT);
 
         // Asteroid scenery (mid-band), tumbling at the sides.
         for r in &self.rocks {
@@ -490,7 +488,7 @@ impl Mode for RailShooter {
             }
             let s = r.r * (0.7 + 0.45 * feat.mid);
             let spin = t * 0.6 + r.kind as f32;
-            box_outlined(vec3(r.x, gy(r.x, z) + r.y, z), vec3(s, s * 0.8, s) * (1.0 + 0.1 * spin.sin()), mix(slate(), ink(), 0.5));
+            box_outlined(vec3(r.x, r.y, z), vec3(s, s * 0.8, s) * (1.0 + 0.1 * spin.sin()), mix(slate(), ink(), 0.5));
         }
 
         // Checkpoint rings (silver / rare gold), shimmering on treble.
@@ -504,10 +502,9 @@ impl Mode for RailShooter {
             let c = if passing { mix(base, spec(), 0.7) } else { mix(base, spec(), 0.2 + 0.35 * feat.treble) };
             let rr = 3.0 + 0.2 * feat.mid;
             let segs = 18;
-            let gr = gy(0.0, z);
             for k in 0..segs {
                 let a = k as f32 / segs as f32 * std::f32::consts::TAU;
-                box_outlined(vec3(a.cos() * rr, gr + 1.6 + a.sin() * rr, z), vec3(0.22, 0.22, 0.5), c);
+                box_outlined(vec3(a.cos() * rr, 1.3 + a.sin() * rr, z), vec3(0.22, 0.22, 0.5), c);
             }
         }
 
@@ -521,15 +518,14 @@ impl Mode for RailShooter {
                 continue;
             }
             let s = if e.boss { 1.35 + 0.3 * feat.bass } else { 1.0 };
-            let ey = gy(e.x, z) + e.y;
-            draw_wedge(vec3(e.x, ey, z), s, amber(), mix(amber(), ink(), 0.35));
+            draw_wedge(vec3(e.x, e.y, z), s, amber(), mix(amber(), ink(), 0.35));
             if e.boss {
-                draw_cube_wires(vec3(e.x, ey, z), vec3(1.7, 1.1, 1.7) * s, with_alpha(amber_glow(), 0.5));
+                draw_cube_wires(vec3(e.x, e.y, z), vec3(1.7, 1.1, 1.7) * s, with_alpha(amber_glow(), 0.5));
             }
         }
 
-        // The Arwing — flying just above the terrain ahead of the camera.
-        let o = vec3(px * 0.85, self.ground_ship_s + 1.0, -1.4);
+        // The Arwing — low-center, ahead of the camera.
+        let o = vec3(px * 0.85, 1.0, -1.4);
         let bx = |c: Vec3, s: Vec3, col: Color| box_outlined(o + c, s, col);
         bx(vec3(0.0, 0.0, 0.0), vec3(0.45, 0.32, 2.0), slate()); // fuselage
         bx(vec3(0.0, 0.0, 1.2), vec3(0.16, 0.13, 0.7), ink()); // nose
@@ -556,7 +552,7 @@ impl Mode for RailShooter {
                 continue;
             }
             let k = ((t - s.fire_t) / (s.hit_t - s.fire_t)).clamp(0.0, 1.0);
-            let target = vec3(s.tx, gy(s.tx, ez) + s.ty, ez);
+            let target = vec3(s.tx, s.ty, ez);
             let c = style::grade((0.35 + 0.55 * s.power).clamp(0.0, 0.95));
             let muzzles: &[f32] = if s.twin { &[-0.95, 0.95] } else { &[0.0] };
             for &mxo in muzzles {
@@ -575,7 +571,7 @@ impl Mode for RailShooter {
             }
             let k = (b.life / 0.8).clamp(0.0, 1.0);
             let c = mix(style::active().ember_shadow, mix(amber(), spec(), b.hot), k);
-            draw_cube(vec3(b.x, gy(b.x, z) + b.y, z), vec3(0.12, 0.12, 0.12) * k, None, fog(c, -z));
+            draw_cube(vec3(b.x, b.y, z), vec3(0.12, 0.12, 0.12) * k, None, fog(c, -z));
         }
         for s in &self.shells {
             let z = -(s.d - d_now);
@@ -584,7 +580,7 @@ impl Mode for RailShooter {
             }
             let rr = 0.3 + s.age * 2.2;
             let a = (1.0 - s.age / 0.7).clamp(0.0, 1.0) * 0.6;
-            draw_cube_wires(vec3(s.x, gy(s.x, z) + s.y, z), vec3(rr, rr, rr), with_alpha(mix(amber(), spec(), 0.3), a));
+            draw_cube_wires(vec3(s.x, s.y, z), vec3(rr, rr, rr), with_alpha(mix(amber(), spec(), 0.3), a));
         }
 
         // ================= 2D HUD ===========================================

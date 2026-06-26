@@ -96,12 +96,6 @@ impl Mode for Terrain {
             draw_rectangle(x, y, star_px, star_px, Color::new(spec().r, spec().g, spec().b, a));
         }
         draw_rectangle(0.0, horizon_y, sw, sh - horizon_y, SKY_HORIZON);
-        let (sx, sy) = (sw * 0.5, horizon_y * 0.92);
-        let sun_r = sh * (0.11 + 0.03 * feat.bass);
-        draw_circle(sx, sy, sun_r * 1.3, Color::new(amber().r, amber().g, amber().b, 0.22));
-        draw_circle(sx, sy, sun_r, Color::new(amber().r, amber().g, amber().b, 0.92));
-        draw_circle(sx, sy, sun_r * 0.6, Color::new(style::amber_glow().r, style::amber_glow().g, style::amber_glow().b, 0.95));
-        draw_circle(sx, sy, sun_r * 0.3, Color::new(spec().r, spec().g, spec().b, 0.9));
 
         // ---- 3D pass --------------------------------------------------------
         let cam_pos = vec3(0.0, 5.2 + feat.bass * 0.6, 9.0);

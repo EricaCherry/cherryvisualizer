@@ -6,7 +6,7 @@ use macroquad::prelude::*;
 
 use crate::analysis::N_BANDS;
 use crate::modes::{FrameCtx, Mode, Param};
-use crate::style::{self, amber, grade, teal_deep, with_alpha};
+use crate::style::{grade, teal_deep, with_alpha};
 use crate::track::Track;
 use crate::view::{View, AH, AW};
 
@@ -16,8 +16,6 @@ pub struct Radial {
     cap_vel: [f32; N_BANDS],
     rot: f32,
     flash: f32,
-    mid_s: f32,
-    last_hero: usize,
     inner: f32,
 }
 
@@ -29,8 +27,6 @@ impl Radial {
             cap_vel: [0.0; N_BANDS],
             rot: 0.0,
             flash: 0.0,
-            mid_s: 0.0,
-            last_hero: 0,
             inner: 1.7,
         }
     }
@@ -72,9 +68,7 @@ impl Mode for Radial {
                 self.flash = self.flash.max((s * 0.22).min(0.6));
             }
         }
-        // Smooth the rotation driver so the spin doesn't twitch on band jitter.
-        self.mid_s += (ctx.feat.mid - self.mid_s) * (1.0 - (-dt / 0.15).exp());
-        self.rot += dt * (0.05 + self.mid_s * 0.4);
+        self.rot += dt * (0.05 + ctx.feat.mid * 0.4);
         // Spokes track the analysis bands directly (single smoothing is upstream).
         for i in 0..N_BANDS {
             self.heights[i] = ctx.feat.bands[i];
@@ -86,11 +80,6 @@ impl Mode for Radial {
                 self.caps[i] = (self.caps[i] + self.cap_vel[i] * dt).max(self.heights[i]);
             }
         }
-        // Hero = loudest inner band, with hysteresis (no strobing between equals).
-        let cand = (2..N_BANDS - 2).max_by(|&a, &b| self.heights[a].total_cmp(&self.heights[b])).unwrap_or(2);
-        if self.heights[cand] > self.heights[self.last_hero] * 1.15 {
-            self.last_hero = cand;
-        }
     }
 
     fn draw(&self, _ctx: &FrameCtx) {
@@ -98,7 +87,6 @@ impl Mode for Radial {
         let (cx, cy) = (AW * 0.5, AH * 0.5);
         let r0 = self.inner * (1.0 + self.flash * 0.12);
         let maxlen = 2.0;
-        let hero = self.last_hero;
 
         // Faint inner ring.
         let segs = 48;
@@ -114,20 +102,15 @@ impl Mode for Radial {
 
         for i in 0..N_BANDS {
             let h = self.heights[i];
-            let c = grade(h);
-            let is_hero = i == hero && h > 0.05;
+            let c = grade(h); // every spoke coloured by its own level
             for mir in [1.0f32, -1.0] {
                 let ang = self.rot + mir * (i as f32 / N_BANDS as f32) * std::f32::consts::PI;
                 let (ca, sa) = (ang.cos(), ang.sin());
                 let b = (r0 + h * maxlen).min(AH * 0.5 - 0.25);
-                let thick = if is_hero { 5.0 } else { 3.0 };
+                let thick = 2.5 + h * 3.0; // louder spokes a touch bolder
                 v.line(cx + ca * r0, cy + sa * r0, cx + ca * b, cy + sa * b, thick, c);
-                if is_hero {
-                    style::glow_core(&v, cx + ca * b, cy + sa * b, 0.12, amber());
-                } else {
-                    let cap = (r0 + self.caps[i] * maxlen).min(AH * 0.5 - 0.25);
-                    v.circle(cx + ca * cap, cy + sa * cap, 0.04, with_alpha(c, 0.7));
-                }
+                let cap = (r0 + self.caps[i] * maxlen).min(AH * 0.5 - 0.25);
+                v.circle(cx + ca * cap, cy + sa * cap, 0.04, with_alpha(c, 0.7));
             }
         }
     }
