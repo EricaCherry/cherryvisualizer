@@ -37,6 +37,11 @@ use modes::scope::Scope;
 use modes::spectrogram::Spectrogram;
 use modes::spectrum::Spectrum;
 use modes::starfield::Starfield;
+use modes::galaxy::Galaxy;
+use modes::lava::Lava;
+use modes::mirror::Mirror;
+use modes::pills::Pills;
+use modes::ring::RingFire;
 use modes::surfer::Surfer;
 use modes::terrain::Terrain;
 use modes::tunnel::Tunnel;
@@ -50,7 +55,7 @@ const SHOT_FRAMES: u32 = 180;
 /// The mode registry — the single source of truth for the picker, the factory,
 /// and `MODE_COUNT`. Add a mode here (plus its `mod` line) and it appears
 /// everywhere; nothing else to keep in sync.
-const MODES: [fn() -> Box<dyn Mode>; 12] = [
+const MODES: [fn() -> Box<dyn Mode>; 17] = [
     || Box::new(Breakout::new()),
     || Box::new(Spectrum::new()),
     || Box::new(Scope::new()),
@@ -60,6 +65,11 @@ const MODES: [fn() -> Box<dyn Mode>; 12] = [
     || Box::new(Radial::new()),
     || Box::new(Nebula::new()),
     || Box::new(Vinyl::new()),
+    || Box::new(Mirror::new()),
+    || Box::new(RingFire::new()),
+    || Box::new(Galaxy::new()),
+    || Box::new(Lava::new()),
+    || Box::new(Pills::new()),
     || Box::new(Terrain::new()),
     || Box::new(Surfer::new()),
     || Box::new(RailShooter::new()),

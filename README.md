@@ -49,8 +49,10 @@ theme: pick Background / Body / Hero / Highlight with color pickers in
 
 ## The modes
 
-Eleven so far, mixing the flagship "the audio plays the game" modes with the
-classic music-visualizer staples:
+Seventeen so far, mixing the flagship "the audio plays the game" modes with the
+classic music-visualizer staples (several ported in the spirit of the web
+visualizers — Terrain, Mirrored Bars, Ring of Fire, Galaxy, Lava Lamp, Glow
+Pills):
 
 **Waveform Breakout** — breakout with no player and no paddle sprite: **the live
 waveform IS the paddle.** It forms a deforming surface along the bottom of the
@@ -86,6 +88,27 @@ the cloud, and beats burst it brighter.
 
 **Vinyl** — a spinning record whose concentric grooves trace the live waveform;
 loudness drags the platter faster and an amber label pulses on the beat.
+
+**Terrain** — an audio landscape: each moment the spectrum becomes a ridgeline at
+the front of a heightmap that scrolls away to the horizon, extruding flowing
+mountains. A real lit mesh (per-vertex normals through the PBR material), graded
+by energy and fogged into a dusk sky.
+
+**Mirrored Bars** — the spectrum reflected above and below a centre line into a
+symmetric bar field, with cream-tipped bars and a warm hero.
+
+**Ring of Fire** — the spectrum wrapped into a ring of glowing spikes over a
+pulsing bass corona; treble spikes flare and beats bloom the whole ring.
+
+**Galaxy** — a spiral of stars wheeling around a glowing core: mids drive the
+spin, bass breathes the arms outward, treble twinkles the rim, a tilted
+projection gives it depth.
+
+**Lava Lamp** — gooey blobs drifting up and down, swelling with the bass and
+popping on the beat; stacked translucent halos merge into soft metaballs.
+
+**Glow Pills** — a soft cloud of glowing orbs flaring as a bass-driven focus
+point orbits through them; each orb also lights with its own frequency band.
 
 **Beat Surfer** — a [Vib-Ribbon](https://en.wikipedia.org/wiki/Vib-Ribbon)-style
 auto-runner played entirely by the music. At load the whole track is turned into

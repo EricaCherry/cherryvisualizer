@@ -7,9 +7,14 @@
 
 pub mod breakout;
 pub mod course;
+pub mod galaxy;
+pub mod lava;
+pub mod mirror;
 pub mod nebula;
+pub mod pills;
 pub mod radial;
 pub mod railshooter;
+pub mod ring;
 pub mod scope;
 pub mod spectrogram;
 pub mod spectrum;
