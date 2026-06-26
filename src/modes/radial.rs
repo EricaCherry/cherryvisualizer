@@ -5,7 +5,7 @@
 use macroquad::prelude::*;
 
 use crate::analysis::N_BANDS;
-use crate::modes::{FrameCtx, Mode, Param};
+use crate::modes::{FrameCtx, Mode, Param, focus_band};
 use crate::style::{self, amber, grade, teal_deep, with_alpha};
 use crate::track::Track;
 use crate::view::{View, AH, AW};
@@ -16,14 +16,29 @@ pub struct Radial {
     cap_vel: [f32; N_BANDS],
     rot: f32,
     flash: f32,
+    mid_s: f32,
+    last_hero: usize,
     gain: f32,
     smooth: f32,
     inner: f32,
+    focus: f32,
 }
 
 impl Radial {
     pub fn new() -> Self {
-        Radial { heights: [0.0; N_BANDS], caps: [0.0; N_BANDS], cap_vel: [0.0; N_BANDS], rot: 0.0, flash: 0.0, gain: 1.4, smooth: 0.30, inner: 1.7 }
+        Radial {
+            heights: [0.0; N_BANDS],
+            caps: [0.0; N_BANDS],
+            cap_vel: [0.0; N_BANDS],
+            rot: 0.0,
+            flash: 0.0,
+            mid_s: 0.0,
+            last_hero: 0,
+            gain: 1.4,
+            smooth: 0.30,
+            inner: 1.7,
+            focus: 0.0,
+        }
     }
 }
 
@@ -43,6 +58,7 @@ impl Mode for Radial {
             Param::float("Gain", self.gain, 0.4, 2.5),
             Param::float("Smoothing", self.smooth, 0.0, 0.9),
             Param::float("Inner radius", self.inner, 0.8, 3.0),
+            Param::float("Focus", self.focus, 0.0, 1.0),
         ]
     }
     fn set_param(&mut self, name: &str, v: f32) {
@@ -50,6 +66,7 @@ impl Mode for Radial {
             "Gain" => self.gain = v,
             "Smoothing" => self.smooth = v,
             "Inner radius" => self.inner = v,
+            "Focus" => self.focus = v,
             _ => {}
         }
     }
@@ -70,15 +87,19 @@ impl Mode for Radial {
                 self.flash = self.flash.max((s * 0.22).min(0.6));
             }
         }
-        self.rot += dt * (0.05 + ctx.feat.mid * 0.4);
-        let release = (1.0 - self.smooth.clamp(0.0, 0.95)) * 0.5;
+        // Smooth the rotation driver so the spin doesn't twitch on band jitter.
+        self.mid_s += (ctx.feat.mid - self.mid_s) * (1.0 - (-dt / 0.15).exp());
+        self.rot += dt * (0.05 + self.mid_s * 0.4);
+        // Snappy rise (~45ms), knob-controlled fall — thin spokes have no width to
+        // average jitter, so the dt-based envelope matters more here than Spectrum.
+        let att = 1.0 - (-dt / 0.045).exp();
+        let rel_tau = 0.06 + self.smooth.clamp(0.0, 0.95) * 0.45;
+        let rel = 1.0 - (-dt / rel_tau).exp();
         for i in 0..N_BANDS {
-            let target = (ctx.feat.bands[i] * self.gain).min(1.0);
-            if target > self.heights[i] {
-                self.heights[i] += (target - self.heights[i]) * 0.6;
-            } else {
-                self.heights[i] += (target - self.heights[i]) * release;
-            }
+            let raw = (focus_band(&ctx.feat.bands, i, self.focus) * self.gain).min(1.0);
+            let target = ((raw - 0.06).max(0.0) / 0.94).min(1.0);
+            let k = if target > self.heights[i] { att } else { rel };
+            self.heights[i] += (target - self.heights[i]) * k;
             if self.heights[i] >= self.caps[i] {
                 self.caps[i] = self.heights[i];
                 self.cap_vel[i] = 0.0;
@@ -87,6 +108,11 @@ impl Mode for Radial {
                 self.caps[i] = (self.caps[i] + self.cap_vel[i] * dt).max(self.heights[i]);
             }
         }
+        // Hero = loudest inner band, with hysteresis (no strobing between equals).
+        let cand = (2..N_BANDS - 2).max_by(|&a, &b| self.heights[a].total_cmp(&self.heights[b])).unwrap_or(2);
+        if self.heights[cand] > self.heights[self.last_hero] * 1.15 {
+            self.last_hero = cand;
+        }
     }
 
     fn draw(&self, _ctx: &FrameCtx) {
@@ -94,7 +120,7 @@ impl Mode for Radial {
         let (cx, cy) = (AW * 0.5, AH * 0.5);
         let r0 = self.inner * (1.0 + self.flash * 0.12);
         let maxlen = 4.0;
-        let hero = (0..N_BANDS).max_by(|&a, &b| self.heights[a].total_cmp(&self.heights[b])).unwrap_or(0);
+        let hero = self.last_hero;
 
         // Faint inner ring.
         let segs = 48;

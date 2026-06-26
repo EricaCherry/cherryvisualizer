@@ -87,6 +87,17 @@ impl Analyser {
         }
         let raw_rms = (sum_sq / n.max(1) as f32).sqrt();
 
+        // Noise gate from the HONEST pre-auto-gain level: below ~-56 dBFS (hiss,
+        // quantisation, room tone) it closes to 0 and ramps fully open by ~-44 dBFS,
+        // so silence shows nothing instead of the AGC amplifying noise to full. The
+        // smoothstep knee makes fades ramp rather than pop. Applied to rms + bands
+        // below, so all 12 modes go still in true silence for free.
+        let gate = {
+            let (lo, hi) = (0.0015f32, 0.006f32);
+            let g = ((raw_rms - lo) / (hi - lo)).clamp(0.0, 1.0);
+            g * g * (3.0 - 2.0 * g)
+        };
+
         // Adaptive loudness: auto-level to the recent peak (a running peak with a
         // ~2s release + floor) so quiet and loud tracks both use the full range.
         let rel = (-dt / 2.5).exp();
@@ -94,7 +105,7 @@ impl Analyser {
         // Headroom (×1.25) so typical content lands ~0.6–0.8 and only true peaks
         // reach 1.0. Without it `rms` pinned to a constant on any sustained
         // passage (loud_ref == raw_rms), so loud and quiet looked identical.
-        let rms = (raw_rms / (self.loud_ref * 1.25)).min(1.0);
+        let rms = (raw_rms / (self.loud_ref * 1.25)).min(1.0) * gate;
 
         for i in 0..self.fft_len {
             let s = if i < n { samples[i] } else { 0.0 };
@@ -109,9 +120,11 @@ impl Analyser {
         let bin_hz = sr / self.fft_len as f32;
         let to_bin = |hz: f32| ((hz / bin_hz).round() as usize).clamp(1, n_bins - 1);
 
-        // 32 log-spaced bands (raw peak magnitude per band).
-        let f_min = 30.0f32;
-        let f_max = (sr / 2.0).min(16_000.0);
+        // 32 log-spaced bands (raw peak magnitude per band). The range excludes
+        // the sub-bass rumble/DC below ~45 Hz and the airy hiss above ~13 kHz —
+        // little musical signal, lots of noise — so every band mode reads cleaner.
+        let f_min = 45.0f32;
+        let f_max = (sr / 2.0).min(13_000.0);
         let (lmin, lmax) = (f_min.log2(), f_max.log2());
         let mut raw = [0.0f32; N_BANDS];
         let mut frame_max = 0.0f32;
@@ -131,12 +144,15 @@ impl Analyser {
         // (broadband) music fills the range, with a near-linear curve that keeps
         // loud and quiet bands visibly different. The release is near-transparent
         // (~0.1s) so each mode owns its own fall instead of stacking on a slow one.
-        self.band_ref = frame_max.max(self.band_ref * rel).max(0.0012);
+        // band_ref floored at 0.004 (not 0.0012) caps worst-case noise gain at
+        // ~300x instead of ~1000x; instant attack with a ~0.18s fall (release 5.5)
+        // reads as snappy AND clean instead of strobing on single-frame noise.
+        self.band_ref = frame_max.max(self.band_ref * rel).max(0.004);
         let band_gain = 1.2 / self.band_ref;
-        let release = (-dt * 9.0).exp();
+        let release = (-dt * 5.5).exp();
         let mut bands = [0.0f32; N_BANDS];
         for b in 0..N_BANDS {
-            let target = (raw[b] * band_gain).min(1.0).powf(0.85);
+            let target = (raw[b] * band_gain).min(1.0).powf(0.85) * gate;
             self.smoothed[b] = target.max(self.smoothed[b] * release);
             bands[b] = self.smoothed[b];
         }

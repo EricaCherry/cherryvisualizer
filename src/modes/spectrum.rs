@@ -10,7 +10,7 @@
 use macroquad::prelude::*;
 
 use crate::analysis::N_BANDS;
-use crate::modes::{FrameCtx, Mode, Param};
+use crate::modes::{FrameCtx, Mode, Param, focus_band};
 use crate::style::{amber, hash01, mix, smoothstep, spec, teal, teal_deep, with_alpha};
 use crate::track::Track;
 use crate::view::{View, AH, AW};
@@ -20,10 +20,12 @@ pub struct Spectrum {
     caps: [f32; N_BANDS],
     cap_vel: [f32; N_BANDS],
     flash: f32,
+    last_hero: usize,
     // live-tunable
     gain: f32,
     smooth: f32,
     gap: f32,
+    focus: f32,
 }
 
 impl Spectrum {
@@ -33,9 +35,11 @@ impl Spectrum {
             caps: [0.0; N_BANDS],
             cap_vel: [0.0; N_BANDS],
             flash: 0.0,
+            last_hero: 0,
             gain: 1.35,
             smooth: 0.30,
             gap: 0.22,
+            focus: 0.0,
         }
     }
 }
@@ -58,6 +62,7 @@ impl Mode for Spectrum {
             Param::float("Gain", self.gain, 0.4, 2.5),
             Param::float("Smoothing", self.smooth, 0.0, 0.9),
             Param::float("Bar gap", self.gap, 0.0, 0.6),
+            Param::float("Focus", self.focus, 0.0, 1.0),
         ]
     }
 
@@ -66,6 +71,7 @@ impl Mode for Spectrum {
             "Gain" => self.gain = v,
             "Smoothing" => self.smooth = v,
             "Bar gap" => self.gap = v,
+            "Focus" => self.focus = v,
             _ => {}
         }
     }
@@ -85,15 +91,17 @@ impl Mode for Spectrum {
                 self.flash = self.flash.max((s * 0.22).min(0.6));
             }
         }
-        // Bars attack fast, release at a rate the "Smoothing" knob slows.
-        let release = (1.0 - self.smooth.clamp(0.0, 0.95)) * 0.5;
+        // Snappy rise (~45ms), knob-controlled fall (60..510ms) — dt-based so
+        // 30 fps export matches 60 fps live. The Focus param zooms into the mids.
+        let att = 1.0 - (-dt / 0.045).exp();
+        let rel_tau = 0.06 + self.smooth.clamp(0.0, 0.95) * 0.45;
+        let rel = 1.0 - (-dt / rel_tau).exp();
         for i in 0..N_BANDS {
-            let target = (ctx.feat.bands[i] * self.gain).min(1.0);
-            if target > self.heights[i] {
-                self.heights[i] += (target - self.heights[i]) * 0.6;
-            } else {
-                self.heights[i] += (target - self.heights[i]) * release;
-            }
+            let raw = (focus_band(&ctx.feat.bands, i, self.focus) * self.gain).min(1.0);
+            // Display floor so amplified silence stays dark.
+            let target = ((raw - 0.06).max(0.0) / 0.94).min(1.0);
+            let k = if target > self.heights[i] { att } else { rel };
+            self.heights[i] += (target - self.heights[i]) * k;
             // Peak cap: snaps up to the bar, then falls under gravity.
             if self.heights[i] >= self.caps[i] {
                 self.caps[i] = self.heights[i];
@@ -102,6 +110,12 @@ impl Mode for Spectrum {
                 self.cap_vel[i] -= 2.4 * dt;
                 self.caps[i] = (self.caps[i] + self.cap_vel[i] * dt).max(self.heights[i]);
             }
+        }
+        // Hero = loudest INNER band, with hysteresis so the amber flash doesn't
+        // strobe between two near-equal bands.
+        let cand = (2..N_BANDS - 2).max_by(|&a, &b| self.heights[a].total_cmp(&self.heights[b])).unwrap_or(2);
+        if self.heights[cand] > self.heights[self.last_hero] * 1.15 {
+            self.last_hero = cand;
         }
     }
 
@@ -113,8 +127,8 @@ impl Mode for Spectrum {
             v.rect(0.0, AH, AW, AH, with_alpha(teal_deep(), self.flash * 0.05));
         }
 
-        // The hero is the single loudest band; only it is allowed to go warm.
-        let hero = (0..N_BANDS).max_by(|&a, &b| self.heights[a].total_cmp(&self.heights[b])).unwrap_or(0);
+        // The hero is the single loudest band (chosen with hysteresis in update).
+        let hero = self.last_hero;
 
         let base = AH * 0.42; // off-center baseline -> asymmetric negative space
         let max_h = AH * 0.66;

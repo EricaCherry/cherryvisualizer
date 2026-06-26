@@ -10,7 +10,7 @@
 use macroquad::prelude::*;
 
 use crate::analysis::N_BANDS;
-use crate::modes::{FrameCtx, Mode, Param};
+use crate::modes::{FrameCtx, Mode, Param, focus_band};
 use crate::style::{self, hash01};
 use crate::track::Track;
 use crate::view::{View, AH, AW};
@@ -20,13 +20,24 @@ pub struct Spectrogram {
     /// Slow per-band envelope — sustained energy settles here so only the
     /// transient ABOVE it burns warm (keeps the ever-loud bass from amber).
     env: [f32; N_BANDS],
+    /// Pre-smoothed column actually pushed — the scroll keeps every frame
+    /// forever, so single-frame noise must be damped BEFORE it fossilises.
+    disp: [f32; N_BANDS],
     width: usize,
     gain: f32,
+    focus: f32,
 }
 
 impl Spectrogram {
     pub fn new() -> Self {
-        Spectrogram { cols: std::collections::VecDeque::new(), env: [0.0; N_BANDS], width: 260, gain: 1.2 }
+        Spectrogram {
+            cols: std::collections::VecDeque::new(),
+            env: [0.0; N_BANDS],
+            disp: [0.0; N_BANDS],
+            width: 260,
+            gain: 1.2,
+            focus: 0.0,
+        }
     }
 }
 
@@ -52,6 +63,7 @@ impl Mode for Spectrogram {
         vec![
             Param::float("Gain", self.gain, 0.4, 3.0),
             Param::int("History", self.width as i32, 80, 480),
+            Param::float("Focus", self.focus, 0.0, 1.0),
         ]
     }
 
@@ -59,6 +71,7 @@ impl Mode for Spectrogram {
         match name {
             "Gain" => self.gain = v,
             "History" => self.width = (v.round() as usize).max(8),
+            "Focus" => self.focus = v,
             _ => {}
         }
     }
@@ -66,19 +79,25 @@ impl Mode for Spectrogram {
     fn reset(&mut self, _track: &Track) {
         self.cols.clear();
         self.env = [0.0; N_BANDS];
+        self.disp = [0.0; N_BANDS];
     }
 
     fn update(&mut self, ctx: &FrameCtx) {
+        let dt = ctx.dt;
         let mut col = [0.0f32; N_BANDS];
         for i in 0..N_BANDS {
-            // ^1.4 pushes quiet bins down toward the ink floor (bimodal panel).
-            let raw = (ctx.feat.bands[i] * self.gain).clamp(0.0, 1.0).powf(1.1);
-            // Show the level ABOVE a slow per-band envelope, so sustained loud
-            // bass settles to teal and only transient hits burn amber.
+            // ^1.1 pushes quiet bins down toward the ink floor (bimodal panel).
+            let raw = (focus_band(&ctx.feat.bands, i, self.focus) * self.gain).clamp(0.0, 1.0).powf(1.1);
+            // Show the level ABOVE a slow per-band envelope (plus a small floor),
+            // so sustained loud bass settles to teal and the quiet noise stays ink.
             self.env[i] += (raw - self.env[i]) * 0.05;
-            col[i] = ((raw - 0.3 * self.env[i]).max(0.0) * 1.4).min(1.0);
+            col[i] = ((raw - 0.3 * self.env[i] - 0.05).max(0.0) * 1.4).min(1.0);
+            // Pre-smooth (40 ms rise / 120 ms fall) before the column is frozen
+            // into the scroll, so a one-frame noise blip can't streak across it.
+            let tc = if col[i] > self.disp[i] { 1.0 - (-dt / 0.04).exp() } else { 1.0 - (-dt / 0.12).exp() };
+            self.disp[i] += (col[i] - self.disp[i]) * tc;
         }
-        self.cols.push_back(col);
+        self.cols.push_back(self.disp);
         while self.cols.len() > self.width {
             self.cols.pop_front();
         }
@@ -99,8 +118,8 @@ impl Mode for Spectrogram {
             let live = if (n - ci) as f32 <= 4.0 { 1.06 } else { 1.0 };
             for b in 0..N_BANDS {
                 let val = col[b] * jit * live;
-                if val < 0.02 {
-                    continue; // invisible (presence ~0) — skip the draw call
+                if val < 0.06 {
+                    continue; // below the presence floor — skip the draw call
                 }
                 let y_top = (b + 1) as f32 * rh;
                 v.rect(x, y_top, cw + 0.01, rh + 0.01, heat(val));

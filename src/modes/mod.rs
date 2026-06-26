@@ -18,8 +18,27 @@ pub mod surfer;
 pub mod tunnel;
 pub mod vinyl;
 
-use crate::analysis::Features;
+use crate::analysis::{Features, N_BANDS};
 use crate::track::Track;
+
+/// Map a display slot (0..N_BANDS) to a (interpolated) source band, cropping
+/// `focus` of the extreme low + high bands and spreading the kept mids across
+/// all the slots — a "frequency zoom". focus 0 = identity (all 32 bands shown);
+/// focus 1 = keep only the central ~40% (the musical mids) stretched full-width,
+/// so rumble and hiss are left out. A cheap, reversible display transform; the
+/// real analysis bands are untouched.
+pub fn focus_band(bands: &[f32; N_BANDS], slot: usize, focus: f32) -> f32 {
+    let f = focus.clamp(0.0, 1.0);
+    let crop = 0.30 * f; // up to 30% chopped off each end
+    let lo = crop * (N_BANDS - 1) as f32;
+    let hi = (1.0 - crop) * (N_BANDS - 1) as f32;
+    let t = slot as f32 / (N_BANDS - 1) as f32;
+    let src = lo + t * (hi - lo);
+    let i0 = src.floor() as usize;
+    let i1 = (i0 + 1).min(N_BANDS - 1);
+    let fr = src - i0 as f32;
+    bands[i0] * (1.0 - fr) + bands[i1] * fr
+}
 
 /// Everything a mode sees each frame.
 pub struct FrameCtx<'a> {
