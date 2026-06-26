@@ -31,28 +31,18 @@ impl Scope {
 
     fn sample(wave: &[f32]) -> Vec<f32> {
         let n = wave.len().max(1);
-        // Fixed scale on the raw PCM (NOT per-window peak — that forced every
-        // window to the same height regardless of loudness). Loudness reaches the
-        // trace through the rms-scaled amplitude below, so quiet stays small.
+        // RAW PCM, no smoothing — a crisp time-domain trace like a real scope and
+        // the web visualizers. (The old [1,2,1] blur read as mush.) Loudness still
+        // reaches the trace via the rms-scaled amplitude in draw(), so quiet stays
+        // small. Fixed scale, not per-window peak (which cancelled loudness).
         let norm = 2.4;
-        let mut v: Vec<f32> = (0..NPTS)
+        (0..NPTS)
             .map(|i| {
                 let f = i as f32 / (NPTS - 1) as f32;
                 let idx = ((f * (n - 1) as f32) as usize).min(n - 1);
                 wave[idx] * norm
             })
-            .collect();
-        // One [1,2,1] pass takes the jagged edge off without flattening crests.
-        // Endpoints are edge-replicated (not left raw) so they can't jut out.
-        for _ in 0..1 {
-            let src = v.clone();
-            for i in 0..NPTS {
-                let l = src[i.saturating_sub(1)];
-                let r = src[(i + 1).min(NPTS - 1)];
-                v[i] = l * 0.25 + src[i] * 0.5 + r * 0.25;
-            }
-        }
-        v
+            .collect()
     }
 }
 

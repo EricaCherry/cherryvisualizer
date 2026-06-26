@@ -93,7 +93,7 @@ impl Mode for Vinyl {
             for s in 0..=segs {
                 let a = s as f32 / segs as f32 * std::f32::consts::TAU + self.angle;
                 let wi = (s + r * 5) % wave.len();
-                let rr = base_r + wave[wi] * norm * self.groove * 0.06 * (0.5 + self.rms_s * 1.5);
+                let rr = base_r + wave[wi] * norm * self.groove * 0.22 * (0.6 + self.rms_s * 0.8);
                 let p = (cx + a.cos() * rr, cy + a.sin() * rr);
                 if let Some((px, py)) = prev {
                     v.line(px, py, p.0, p.1, 1.3, c);
