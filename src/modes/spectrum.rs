@@ -128,7 +128,7 @@ impl Mode for Spectrum {
         let hero = self.last_hero;
 
         let base = AH * 0.42; // off-center baseline -> asymmetric negative space
-        let max_h = AH * 0.66;
+        let max_h = AH * 0.50; // keep full-scale bars (+ caps) inside the 16x9 world
         let margin = 0.35;
         let usable = AW - margin * 2.0;
         // Log-ish bar widths (wider lows, narrower highs) instead of 32 clones.

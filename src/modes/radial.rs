@@ -57,7 +57,7 @@ impl Mode for Radial {
         vec![
             Param::float("Gain", self.gain, 0.4, 2.5),
             Param::float("Smoothing", self.smooth, 0.0, 0.9),
-            Param::float("Inner radius", self.inner, 0.8, 3.0),
+            Param::float("Inner radius", self.inner, 0.8, 2.0),
             Param::float("Focus", self.focus, 0.0, 1.0),
         ]
     }
@@ -115,7 +115,7 @@ impl Mode for Radial {
         let v = View::fit_world(AW, AH);
         let (cx, cy) = (AW * 0.5, AH * 0.5);
         let r0 = self.inner * (1.0 + self.flash * 0.12);
-        let maxlen = 4.0;
+        let maxlen = 2.0;
         let hero = self.last_hero;
 
         // Faint inner ring.
@@ -137,13 +137,13 @@ impl Mode for Radial {
             for mir in [1.0f32, -1.0] {
                 let ang = self.rot + mir * (i as f32 / N_BANDS as f32) * std::f32::consts::PI;
                 let (ca, sa) = (ang.cos(), ang.sin());
-                let b = r0 + h * maxlen;
+                let b = (r0 + h * maxlen).min(AH * 0.5 - 0.25);
                 let thick = if is_hero { 5.0 } else { 3.0 };
                 v.line(cx + ca * r0, cy + sa * r0, cx + ca * b, cy + sa * b, thick, c);
                 if is_hero {
                     style::glow_core(&v, cx + ca * b, cy + sa * b, 0.12, amber());
                 } else {
-                    let cap = r0 + self.caps[i] * maxlen;
+                    let cap = (r0 + self.caps[i] * maxlen).min(AH * 0.5 - 0.25);
                     v.circle(cx + ca * cap, cy + sa * cap, 0.04, with_alpha(c, 0.7));
                 }
             }

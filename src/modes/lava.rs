@@ -35,10 +35,10 @@ impl Lava {
         self.blobs.clear();
         for i in 0..self.n {
             self.blobs.push(Blob {
-                x: 2.0 + hash01(i * 3) * 12.0,
-                y: 1.0 + hash01(i * 5) * 7.0,
+                x: 3.5 + hash01(i * 3) * 9.0,
+                y: 3.0 + hash01(i * 5) * 3.0,
                 vy: (hash01(i * 7) - 0.5) * 1.3,
-                base_r: 0.8 + hash01(i * 9) * 0.8,
+                base_r: 0.45 + hash01(i * 9) * 0.45,
                 phase: hash01(i * 11) * 6.28,
             });
         }
@@ -91,16 +91,16 @@ impl Mode for Lava {
         }
         for b in &mut self.blobs {
             b.y += b.vy * dt * (0.5 + feat.bass * 1.5);
-            if b.y < 1.0 {
-                b.y = 1.0;
+            if b.y < 3.0 {
+                b.y = 3.0;
                 b.vy = b.vy.abs();
             }
-            if b.y > 8.0 {
-                b.y = 8.0;
+            if b.y > 6.0 {
+                b.y = 6.0;
                 b.vy = -b.vy.abs();
             }
             b.x += (ctx.time * 0.5 + b.phase).sin() * feat.treble * self.wobble * dt;
-            b.x = b.x.clamp(1.5, AW - 1.5);
+            b.x = b.x.clamp(3.2, AW - 3.2);
         }
     }
 
@@ -120,7 +120,7 @@ impl Mode for Lava {
         for (i, b) in self.blobs.iter().enumerate() {
             let r = b.base_r * swell;
             let c = grade((0.45 + feat.rms * 0.4 * self.heat).min(1.0));
-            for &(rm, al) in &[(2.4f32, 0.12f32), (1.8, 0.20), (1.2, 0.40), (1.0, 0.85)] {
+            for &(rm, al) in &[(1.8f32, 0.12f32), (1.5, 0.20), (1.2, 0.40), (1.0, 0.85)] {
                 v.circle(b.x, b.y, r * rm, with_alpha(c, al));
             }
             if i == hero {

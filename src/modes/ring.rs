@@ -39,7 +39,7 @@ impl Mode for RingFire {
     fn params(&self) -> Vec<Param> {
         vec![
             Param::float("Gain", self.gain, 0.4, 2.5),
-            Param::float("Inner radius", self.inner, 0.6, 2.5),
+            Param::float("Inner radius", self.inner, 0.6, 1.8),
             Param::float("Bass glow", self.bass_glow, 0.0, 1.0),
         ]
     }
@@ -75,10 +75,10 @@ impl Mode for RingFire {
         let v = View::fit_world(AW, AH);
         let feat = ctx.feat;
         let (cx, cy) = (AW * 0.5, AH * 0.5);
-        let r0 = self.inner * (1.0 + feat.bass * 0.4 + self.flash * 0.2);
+        let r0 = (self.inner * (1.0 + feat.bass * 0.4 + self.flash * 0.2)).min(2.4);
 
         // Bass corona behind the ring.
-        for &(rr, al) in &[(2.7f32, 0.10f32), (2.1, 0.16), (1.5, 0.26)] {
+        for &(rr, al) in &[(2.0f32, 0.10f32), (1.6, 0.16), (1.2, 0.26)] {
             v.circle(cx, cy, r0 * rr, with_alpha(mix(ink(), amber(), 0.6), al * feat.bass * self.bass_glow));
         }
         // Inner ring outline.
@@ -98,7 +98,7 @@ impl Mode for RingFire {
             let i = if kk < 32 { kk } else { 63 - kk };
             let ang = kk as f32 / 64.0 * std::f32::consts::TAU;
             let e = self.heights[i];
-            let len = 0.4 + e * 3.2;
+            let len = 0.3 + e * 1.6;
             let (c0, s0) = (ang.cos(), ang.sin());
             let c = grade((e + feat.rms * 0.4).min(1.0));
             v.line(cx + c0 * r0, cy + s0 * r0, cx + c0 * (r0 + len), cy + s0 * (r0 + len), v.s(0.05 + e * 0.12), c);

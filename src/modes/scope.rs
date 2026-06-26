@@ -105,8 +105,8 @@ impl Mode for Scope {
             for i in 1..NPTS {
                 let x0 = (i - 1) as f32 / (NPTS - 1) as f32 * AW;
                 let x1 = i as f32 / (NPTS - 1) as f32 * AW;
-                let y0 = cy + row[i - 1] * amp;
-                let y1 = cy + row[i] * amp;
+                let y0 = (cy + row[i - 1] * amp).clamp(0.3, AH - 0.3);
+                let y1 = (cy + row[i] * amp).clamp(0.3, AH - 0.3);
                 // Only the very loudest crests tip amber (tighter amber discipline).
                 let mag = row[i - 1].abs().max(row[i].abs());
                 let hot = smoothstep(0.70, 0.98, mag * (0.6 + self.rms_s));
