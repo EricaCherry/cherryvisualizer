@@ -318,19 +318,29 @@ impl Breakout {
         //    so the full bipolar swing reads, and ease over time so it flows.
         // Normalize by the curve's RMS (not its peak) so the TYPICAL swing fills
         // the amplitude — a peaky curve would otherwise read as mostly flat.
+        // Normalise the curve by its RMS (track-independent shape) and drive the
+        // SIZE from the wave-height setting + loudness. The displacement is clamped
+        // SYMMETRICALLY below, so a loud wave reads as a full waveform.
         let rms_pts = (pts.iter().map(|x| x * x).sum::<f32>() / WAVE_PTS as f32).sqrt().max(0.004);
-        let amp = self.paddle_amp * (0.95 + rms * 1.1) / rms_pts;
-        let base = PADDLE_BASE_Y + 1.05;
+        let height = self.paddle_amp * (1.4 + rms * 1.6) / rms_pts;
+        // Centre the wave high enough that it has symmetric room ABOVE and BELOW.
+        // The old low base let loud troughs hit PADDLE_FLOOR and clamp flat, so
+        // only the peaks rose — the "mountain". Now the swing is symmetric.
+        let base = PADDLE_BASE_Y + 1.8;
+        let half = base - PADDLE_FLOOR - 0.1; // max symmetric excursion
         let st = (dt * 7.0).min(1.0);
         let mut moved = 0.0f32;
-        const TAPER: f32 = 0.12;
+        const TAPER: f32 = 0.08;
         for i in 0..WAVE_PTS {
             let f = i as f32 / (WAVE_PTS - 1) as f32;
             // Ease the amplitude to zero at both ends so the wave mounts cleanly
             // to the court walls instead of cutting off (no edge spike).
             let edge = (f / TAPER).min((1.0 - f) / TAPER).clamp(0.0, 1.0);
             let edge = edge * edge * (3.0 - 2.0 * edge); // smoothstep
-            let target = (base + pts[i] * amp * edge).max(PADDLE_FLOOR);
+            // Clamp the displacement SYMMETRICALLY so a loud wave stays a full
+            // waveform (crests AND troughs visible), never a one-sided mountain.
+            let disp = (pts[i] * height * edge).clamp(-half, half);
+            let target = base + disp;
             let delta = (target - self.paddle_y[i]) * st;
             self.paddle_y[i] += delta;
             moved = moved.max(delta.abs());
