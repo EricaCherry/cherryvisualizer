@@ -8,6 +8,7 @@
 pub mod breakout;
 pub mod course;
 pub mod galaxy;
+pub mod heightfield;
 pub mod lava;
 pub mod mirror;
 pub mod nebula;

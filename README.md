@@ -134,11 +134,12 @@ fighters in a formation chosen by its kind (a line abreast, a V, an arc), and th
 Arwing's twin lasers are fired *early* by their exact travel time — **laser
 lead** — so the tracer strikes on the beat and the fighter bursts into debris.
 Because a whole volley shares one beat, the wave reads as a musical phrase rather
-than a spray. The open, melodic events flow **checkpoint rings**, the strongest
-double-hits snap a **barrel roll**, bass breathes the canyon, and the corridor
-floor and walls are lit, **normal-mapped** `.kkrieger`-style sci-fi panels (the
-same PBR material — grid, seams, rivets baked procedurally, tinted by the theme,
-so zero assets and it re-skins with the palette).
+than a spray. The open, melodic events flow **checkpoint rings**, and the strongest
+double-hits snap a **barrel roll**. The ground it flies over **IS the Terrain
+visualizer** — the same scrolling audio heightfield, lit as `.kkrieger`-style
+normal-mapped rock; the ship and camera follow the surface (smoothed) and the
+squadron, rings and tracers all float above the ridges, so you fly a StarFox run
+over the music's own mountains.
 
 ## The 3D look
 
