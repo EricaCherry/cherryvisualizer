@@ -11,9 +11,12 @@ use std::sync::Arc;
 use crate::track::Track;
 
 pub const N_BANDS: usize = 32;
-/// FFT window length, shared by every render path (live, export, bench) so they
-/// never diverge in spectral content.
-pub const FFT_LEN: usize = 2048;
+/// FFT window length (audioMotion-analyzer default) — 5.4 Hz/bin at 44.1 kHz, so
+/// the low octave bands actually resolve. Shared by every render path.
+pub const FFT_LEN: usize = 8192;
+/// The shorter slice of the window handed to modes as the time-domain `wave` (a
+/// crisp ~46 ms oscilloscope trace, independent of the longer FFT window).
+pub const WAVE_LEN: usize = 2048;
 
 /// Build the per-frame [`Features`] at time `t`: copy the PCM window, run the
 /// FFT, and fill in the beat from the offline grid (first beat in `(prev_t, t]`).
@@ -55,10 +58,9 @@ pub struct Analyser {
     spectrum: Vec<Complex<f32>>,
     scratch: Vec<Complex<f32>>,
     fft_len: usize,
-    /// Per-band EMA of the linear magnitude — the AnalyserNode smoothingTimeConstant.
-    smoothed: [f32; N_BANDS],
-    /// Adaptive loudness reference (running peak) so rms responds to any track level.
-    loud_ref: f32,
+    /// Per-BIN EMA of the linear magnitude — the AnalyserNode smoothingTimeConstant,
+    /// the ONLY smoothing in the pipeline (audioMotion order: smooth bins, then band).
+    smoothed: Vec<f32>,
 }
 
 impl Analyser {
@@ -73,39 +75,15 @@ impl Analyser {
                 0.5 * (1.0 - (2.0 * std::f32::consts::PI * i as f32 / (fft_len - 1) as f32).cos())
             })
             .collect();
-        Analyser { fft, hann, input, spectrum, scratch, fft_len, smoothed: [0.0; N_BANDS], loud_ref: 0.05 }
+        let n_bins = spectrum.len();
+        Analyser { fft, hann, input, spectrum, scratch, fft_len, smoothed: vec![0.0; n_bins] }
     }
 
     /// Analyze one window. `dt` drives the visual release-smoothing of bands.
-    pub fn analyze(&mut self, samples: &[f32], sample_rate: u32, dt: f32) -> Features {
+    pub fn analyze(&mut self, samples: &[f32], sample_rate: u32, _dt: f32) -> Features {
         let n = self.fft_len.min(samples.len());
 
-        let mut sum_sq = 0.0f32;
-        for &s in &samples[..n] {
-            sum_sq += s * s;
-        }
-        let raw_rms = (sum_sq / n.max(1) as f32).sqrt();
-
-        // Noise gate from the HONEST pre-auto-gain level: below ~-56 dBFS (hiss,
-        // quantisation, room tone) it closes to 0 and ramps fully open by ~-44 dBFS,
-        // so silence shows nothing instead of the AGC amplifying noise to full. The
-        // smoothstep knee makes fades ramp rather than pop. Applied to rms + bands
-        // below, so all 12 modes go still in true silence for free.
-        let gate = {
-            let (lo, hi) = (0.0015f32, 0.006f32);
-            let g = ((raw_rms - lo) / (hi - lo)).clamp(0.0, 1.0);
-            g * g * (3.0 - 2.0 * g)
-        };
-
-        // Adaptive loudness: auto-level to the recent peak (a running peak with a
-        // ~2s release + floor) so quiet and loud tracks both use the full range.
-        let rel = (-dt / 2.5).exp();
-        self.loud_ref = raw_rms.max(self.loud_ref * rel).max(0.008);
-        // Headroom (×1.25) so typical content lands ~0.6–0.8 and only true peaks
-        // reach 1.0. Without it `rms` pinned to a constant on any sustained
-        // passage (loud_ref == raw_rms), so loud and quiet looked identical.
-        let rms = (raw_rms / (self.loud_ref * 1.25)).min(1.0) * gate;
-
+        // ---- FFT (Hann window) ---------------------------------------------
         for i in 0..self.fft_len {
             let s = if i < n { samples[i] } else { 0.0 };
             self.input[i] = s * self.hann[i];
@@ -117,40 +95,45 @@ impl Analyser {
         let n_bins = self.spectrum.len();
         let sr = sample_rate as f32;
         let bin_hz = sr / self.fft_len as f32;
-        let to_bin = |hz: f32| ((hz / bin_hz).round() as usize).clamp(1, n_bins - 1);
 
-        // 32 log-spaced bands (raw peak magnitude per band). The range excludes
-        // the sub-bass rumble/DC below ~45 Hz and the airy hiss above ~13 kHz —
-        // little musical signal, lots of noise — so every band mode reads cleaner.
-        let f_min = 45.0f32;
-        let f_max = (sr / 2.0).min(13_000.0);
+        // ---- the AnalyserNode pipeline, ported verbatim from audioMotion ----
+        // STAGE 1: ONE EMA on the LINEAR magnitude, per BIN, before banding — the
+        // smoothingTimeConstant, and the ONLY smoothing in the whole pipeline.
+        const SMOOTHING: f32 = 0.5; // audioMotion default
+        for k in 0..n_bins {
+            let mag = self.spectrum[k].norm() * 2.0 / self.fft_len as f32;
+            self.smoothed[k] = SMOOTHING * self.smoothed[k] + (1.0 - SMOOTHING) * mag;
+        }
+
+        // STAGE 2: log-spaced bands (20 Hz..20 kHz). Each band = the MAX smoothed
+        // bin in its range -> dB -> normalized over a FIXED [-85,-25] dB window.
+        // No auto-gain, no gamma, no gate — the dB floor IS the normalization.
+        const MIN_DB: f32 = -85.0;
+        const MAX_DB: f32 = -25.0;
+        let f_min = 20.0f32;
+        let f_max = (sr / 2.0).min(20_000.0);
         let (lmin, lmax) = (f_min.log2(), f_max.log2());
-        let mut raw = [0.0f32; N_BANDS];
+        let mut bands = [0.0f32; N_BANDS];
         for b in 0..N_BANDS {
             let lo = 2f32.powf(lmin + (b as f32 / N_BANDS as f32) * (lmax - lmin));
             let hi = 2f32.powf(lmin + ((b + 1) as f32 / N_BANDS as f32) * (lmax - lmin));
-            let (lob, hib) = (to_bin(lo), to_bin(hi).max(to_bin(lo)));
+            let lob = ((lo / bin_hz).floor() as usize).clamp(1, n_bins - 1);
+            let hib = ((hi / bin_hz).ceil() as usize).clamp(lob, n_bins - 1);
             let mut peak = 0.0f32;
-            for k in lob..=hib.min(n_bins - 1) {
-                peak = peak.max(self.spectrum[k].norm());
+            for k in lob..=hib {
+                peak = peak.max(self.smoothed[k]);
             }
-            raw[b] = peak * 2.0 / self.fft_len as f32;
-        }
-
-        // Web-Audio AnalyserNode model: ONE EMA on the linear magnitude
-        // (smoothingTimeConstant), then a fixed dB window mapped to 0..1. The log
-        // (dB) scale is what makes bars read full and clean; the MIN_DB floor
-        // doubles as the noise gate (content below it maps to 0). No running-peak
-        // auto-gain and no gamma — those over-processed it into laggy mush.
-        const MIN_DB: f32 = -76.0;
-        const MAX_DB: f32 = -18.0;
-        const BAND_TC: f32 = 0.5; // smoothingTimeConstant (light; modes add their own)
-        let mut bands = [0.0f32; N_BANDS];
-        for b in 0..N_BANDS {
-            self.smoothed[b] = BAND_TC * self.smoothed[b] + (1.0 - BAND_TC) * raw[b];
-            let db = 20.0 * (self.smoothed[b] + 1e-9).log10();
+            let db = 20.0 * (peak + 1e-9).log10();
             bands[b] = ((db - MIN_DB) / (MAX_DB - MIN_DB)).clamp(0.0, 1.0);
         }
+
+        // rms from a fixed dB window too (no AGC): -60 dBFS floor -> 0, 0 dB -> 1.
+        let mut sum_sq = 0.0f32;
+        for &s in &samples[..n] {
+            sum_sq += s * s;
+        }
+        let rms_lin = (sum_sq / n.max(1) as f32).sqrt();
+        let rms = ((20.0 * (rms_lin + 1e-9).log10() + 60.0) / 60.0).clamp(0.0, 1.0);
 
         // Broad bands derived from the normalized spectrum (already adaptive,
         // balance preserved). Boundaries from the log map (~250 Hz, ~2 kHz).
@@ -158,7 +141,7 @@ impl Analyser {
             (((hz.log2() - lmin) / (lmax - lmin)) * N_BANDS as f32).clamp(0.0, N_BANDS as f32) as usize
         };
         let b_lo = band_at(250.0).clamp(1, N_BANDS - 1);
-        let b_hi = band_at(2000.0).clamp(b_lo + 1, N_BANDS);
+        let b_hi = band_at(4000.0).clamp(b_lo + 1, N_BANDS); // MilkDrop bass/mid/treble splits
         let (mut bass_mean, mut bass_peak) = (0.0f32, 0.0f32);
         for &v in &bands[0..b_lo] {
             bass_mean += v;

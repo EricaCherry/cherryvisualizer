@@ -26,7 +26,7 @@ use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use egui_macroquad::egui;
 use macroquad::prelude::*;
 
-use analysis::{features_at, Analyser, FFT_LEN};
+use analysis::{features_at, Analyser, FFT_LEN, WAVE_LEN};
 use audio::AudioEngine;
 use export::{ExportSettings, Exporter};
 use modes::breakout::Breakout;
@@ -404,7 +404,7 @@ async fn main() {
             for f in 0..frames + warmup {
                 let t = f as f32 * dt;
                 let feat = features_at(&mut analyser, audio.track(), &mut window, t, (t - dt).max(0.0), dt);
-                let ctx = FrameCtx { wave: &window, feat: &feat, track: audio.track(), time: t, dt };
+                let ctx = FrameCtx { wave: &window[..WAVE_LEN], feat: &feat, track: audio.track(), time: t, dt };
                 let t0 = std::time::Instant::now();
                 modes[mi].update(&ctx);
                 let t1 = std::time::Instant::now();
@@ -714,7 +714,7 @@ async fn main() {
             let feat = features_at(&mut analyser, audio.track(), &mut window, t, last_t, dt);
             last_t = t;
 
-            let ctx = FrameCtx { wave: &window, feat: &feat, track: audio.track(), time: t, dt };
+            let ctx = FrameCtx { wave: &window[..WAVE_LEN], feat: &feat, track: audio.track(), time: t, dt };
             if !audio.is_paused() {
                 modes[sel].update(&ctx);
             }

@@ -17,7 +17,7 @@ use std::time::Instant;
 
 use macroquad::prelude::*;
 
-use crate::analysis::{features_at, Analyser, FFT_LEN};
+use crate::analysis::{features_at, Analyser, FFT_LEN, WAVE_LEN};
 use crate::modes::{FrameCtx, Mode};
 use crate::postfx::PostFx;
 use crate::track::Track;
@@ -169,7 +169,7 @@ impl Exporter {
         // Negative for i==0 so beat_in's half-open (prev, t] still covers a t=0 hit.
         let prev_t = (i as f32 - 1.0) / fps;
         let feat = features_at(&mut self.analyser, track, &mut self.window, t, prev_t, dt);
-        let ctx = FrameCtx { wave: &self.window, feat: &feat, track, time: t, dt };
+        let ctx = FrameCtx { wave: &self.window[..WAVE_LEN], feat: &feat, track, time: t, dt };
 
         self.mode.update(&ctx);
         let (w, h) = (self.settings.width as f32, self.settings.height as f32);
@@ -232,7 +232,7 @@ pub fn render_preview(settings: ExportSettings, mut mode: Box<dyn Mode>, track: 
         let t = i as f32 / fps;
         let prev_t = (i as f32 - 1.0) / fps;
         let feat = features_at(&mut analyser, track, &mut window, t, prev_t, dt);
-        let ctx = FrameCtx { wave: &window, feat: &feat, track, time: t, dt };
+        let ctx = FrameCtx { wave: &window[..WAVE_LEN], feat: &feat, track, time: t, dt };
         mode.update(&ctx);
         if mode.own_background() {
             render_mode_into(&rt, w, h, mode.as_ref(), &ctx);

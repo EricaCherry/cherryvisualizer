@@ -10,7 +10,7 @@
 use macroquad::prelude::*;
 
 use crate::analysis::N_BANDS;
-use crate::modes::{FrameCtx, Mode, Param, focus_band};
+use crate::modes::{FrameCtx, Mode, Param};
 use crate::style::{amber, hash01, mix, smoothstep, spec, teal, teal_deep, with_alpha};
 use crate::track::Track;
 use crate::view::{View, AH, AW};
@@ -21,11 +21,7 @@ pub struct Spectrum {
     cap_vel: [f32; N_BANDS],
     flash: f32,
     last_hero: usize,
-    // live-tunable
-    gain: f32,
-    smooth: f32,
-    gap: f32,
-    focus: f32,
+    gap: f32, // cosmetic bar spacing (audioMotion barSpace)
 }
 
 impl Spectrum {
@@ -36,10 +32,7 @@ impl Spectrum {
             cap_vel: [0.0; N_BANDS],
             flash: 0.0,
             last_hero: 0,
-            gain: 1.0,
-            smooth: 0.5,
             gap: 0.22,
-            focus: 0.0,
         }
     }
 }
@@ -58,21 +51,12 @@ impl Mode for Spectrum {
     }
 
     fn params(&self) -> Vec<Param> {
-        vec![
-            Param::float("Gain", self.gain, 0.4, 2.5),
-            Param::float("Smoothing", self.smooth, 0.0, 0.9),
-            Param::float("Bar gap", self.gap, 0.0, 0.6),
-            Param::float("Focus", self.focus, 0.0, 1.0),
-        ]
+        vec![Param::float("Bar gap", self.gap, 0.0, 0.6)]
     }
 
     fn set_param(&mut self, name: &str, v: f32) {
-        match name {
-            "Gain" => self.gain = v,
-            "Smoothing" => self.smooth = v,
-            "Bar gap" => self.gap = v,
-            "Focus" => self.focus = v,
-            _ => {}
+        if name == "Bar gap" {
+            self.gap = v;
         }
     }
 
@@ -91,14 +75,10 @@ impl Mode for Spectrum {
                 self.flash = self.flash.max((s * 0.22).min(0.6));
             }
         }
-        // ONE symmetric EMA — the Web-Audio AnalyserNode smoothingTimeConstant.
-        // The "Smoothing" slider IS that constant (0 = raw/snappy, 0.9 = glassy).
-        // `tc^(dt*60)` keeps it frame-rate independent (30fps export == 60fps live).
-        let tc = self.smooth.clamp(0.0, 0.95);
-        let k = 1.0 - tc.powf(dt * 60.0);
+        // Bars track the analysis bands DIRECTLY — the single smoothing already
+        // happened once in analysis.rs (the AnalyserNode EMA). No second EMA.
         for i in 0..N_BANDS {
-            let target = (focus_band(&ctx.feat.bands, i, self.focus) * self.gain).min(1.0);
-            self.heights[i] += (target - self.heights[i]) * k;
+            self.heights[i] = ctx.feat.bands[i];
             // Peak cap: snaps up to the bar, then falls under gravity.
             if self.heights[i] >= self.caps[i] {
                 self.caps[i] = self.heights[i];

@@ -13,7 +13,6 @@ use crate::view::{View, AH, AW};
 
 pub struct RingFire {
     heights: [f32; N_BANDS],
-    gain: f32,
     inner: f32,
     bass_glow: f32,
     flash: f32,
@@ -21,7 +20,7 @@ pub struct RingFire {
 
 impl RingFire {
     pub fn new() -> Self {
-        RingFire { heights: [0.0; N_BANDS], gain: 1.0, inner: 1.2, bass_glow: 1.0, flash: 0.0 }
+        RingFire { heights: [0.0; N_BANDS], inner: 1.2, bass_glow: 1.0, flash: 0.0 }
     }
 }
 
@@ -38,14 +37,12 @@ impl Mode for RingFire {
 
     fn params(&self) -> Vec<Param> {
         vec![
-            Param::float("Gain", self.gain, 0.4, 2.5),
             Param::float("Inner radius", self.inner, 0.6, 1.8),
             Param::float("Bass glow", self.bass_glow, 0.0, 1.0),
         ]
     }
     fn set_param(&mut self, name: &str, v: f32) {
         match name {
-            "Gain" => self.gain = v,
             "Inner radius" => self.inner = v,
             "Bass glow" => self.bass_glow = v,
             _ => {}
@@ -58,10 +55,9 @@ impl Mode for RingFire {
     }
 
     fn update(&mut self, ctx: &FrameCtx) {
-        let k = 1.0 - 0.5f32.powf(ctx.dt * 60.0);
+        // Spikes track the analysis bands directly (single smoothing is upstream).
         for i in 0..N_BANDS {
-            let target = (ctx.feat.bands[i] * self.gain).min(1.0);
-            self.heights[i] += (target - self.heights[i]) * k;
+            self.heights[i] = ctx.feat.bands[i];
         }
         self.flash = (self.flash - ctx.dt * 4.0).max(0.0);
         if let Some(s) = ctx.feat.beat {

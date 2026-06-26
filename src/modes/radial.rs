@@ -5,7 +5,7 @@
 use macroquad::prelude::*;
 
 use crate::analysis::N_BANDS;
-use crate::modes::{FrameCtx, Mode, Param, focus_band};
+use crate::modes::{FrameCtx, Mode, Param};
 use crate::style::{self, amber, grade, teal_deep, with_alpha};
 use crate::track::Track;
 use crate::view::{View, AH, AW};
@@ -18,10 +18,7 @@ pub struct Radial {
     flash: f32,
     mid_s: f32,
     last_hero: usize,
-    gain: f32,
-    smooth: f32,
     inner: f32,
-    focus: f32,
 }
 
 impl Radial {
@@ -34,10 +31,7 @@ impl Radial {
             flash: 0.0,
             mid_s: 0.0,
             last_hero: 0,
-            gain: 1.0,
-            smooth: 0.5,
             inner: 1.7,
-            focus: 0.0,
         }
     }
 }
@@ -54,20 +48,11 @@ impl Mode for Radial {
     }
 
     fn params(&self) -> Vec<Param> {
-        vec![
-            Param::float("Gain", self.gain, 0.4, 2.5),
-            Param::float("Smoothing", self.smooth, 0.0, 0.9),
-            Param::float("Inner radius", self.inner, 0.8, 2.0),
-            Param::float("Focus", self.focus, 0.0, 1.0),
-        ]
+        vec![Param::float("Inner radius", self.inner, 0.8, 2.0)]
     }
     fn set_param(&mut self, name: &str, v: f32) {
-        match name {
-            "Gain" => self.gain = v,
-            "Smoothing" => self.smooth = v,
-            "Inner radius" => self.inner = v,
-            "Focus" => self.focus = v,
-            _ => {}
+        if name == "Inner radius" {
+            self.inner = v;
         }
     }
 
@@ -90,12 +75,9 @@ impl Mode for Radial {
         // Smooth the rotation driver so the spin doesn't twitch on band jitter.
         self.mid_s += (ctx.feat.mid - self.mid_s) * (1.0 - (-dt / 0.15).exp());
         self.rot += dt * (0.05 + self.mid_s * 0.4);
-        // ONE symmetric EMA — the Web-Audio smoothingTimeConstant (Smoothing slider).
-        let tc = self.smooth.clamp(0.0, 0.95);
-        let k = 1.0 - tc.powf(dt * 60.0);
+        // Spokes track the analysis bands directly (single smoothing is upstream).
         for i in 0..N_BANDS {
-            let target = (focus_band(&ctx.feat.bands, i, self.focus) * self.gain).min(1.0);
-            self.heights[i] += (target - self.heights[i]) * k;
+            self.heights[i] = ctx.feat.bands[i];
             if self.heights[i] >= self.caps[i] {
                 self.caps[i] = self.heights[i];
                 self.cap_vel[i] = 0.0;

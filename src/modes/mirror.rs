@@ -6,7 +6,7 @@
 use macroquad::prelude::*;
 
 use crate::analysis::N_BANDS;
-use crate::modes::{FrameCtx, Mode, Param, focus_band};
+use crate::modes::{FrameCtx, Mode};
 use crate::style::{amber, hash01, mix, smoothstep, spec, teal, teal_deep, with_alpha};
 use crate::track::Track;
 use crate::view::{View, AH, AW};
@@ -14,14 +14,11 @@ use crate::view::{View, AH, AW};
 pub struct Mirror {
     heights: [f32; N_BANDS],
     last_hero: usize,
-    gain: f32,
-    smooth: f32,
-    focus: f32,
 }
 
 impl Mirror {
     pub fn new() -> Self {
-        Mirror { heights: [0.0; N_BANDS], last_hero: 0, gain: 1.0, smooth: 0.5, focus: 0.0 }
+        Mirror { heights: [0.0; N_BANDS], last_hero: 0 }
     }
 }
 
@@ -36,32 +33,14 @@ impl Mode for Mirror {
         0.12
     }
 
-    fn params(&self) -> Vec<Param> {
-        vec![
-            Param::float("Gain", self.gain, 0.4, 2.5),
-            Param::float("Smoothing", self.smooth, 0.0, 0.9),
-            Param::float("Focus", self.focus, 0.0, 1.0),
-        ]
-    }
-    fn set_param(&mut self, name: &str, v: f32) {
-        match name {
-            "Gain" => self.gain = v,
-            "Smoothing" => self.smooth = v,
-            "Focus" => self.focus = v,
-            _ => {}
-        }
-    }
-
     fn reset(&mut self, _t: &Track) {
         self.heights = [0.0; N_BANDS];
     }
 
     fn update(&mut self, ctx: &FrameCtx) {
-        let tc = self.smooth.clamp(0.0, 0.95);
-        let k = 1.0 - tc.powf(ctx.dt * 60.0);
+        // Bars track the analysis bands directly (single smoothing is upstream).
         for i in 0..N_BANDS {
-            let target = (focus_band(&ctx.feat.bands, i, self.focus) * self.gain).min(1.0);
-            self.heights[i] += (target - self.heights[i]) * k;
+            self.heights[i] = ctx.feat.bands[i];
         }
         let cand = (2..N_BANDS - 2).max_by(|&a, &b| self.heights[a].total_cmp(&self.heights[b])).unwrap_or(2);
         if self.heights[cand] > self.heights[self.last_hero] * 1.15 {

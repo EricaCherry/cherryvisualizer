@@ -10,7 +10,7 @@
 use macroquad::prelude::*;
 
 use crate::analysis::N_BANDS;
-use crate::modes::{FrameCtx, Mode, Param, focus_band};
+use crate::modes::{FrameCtx, Mode, Param};
 use crate::style::{self, hash01};
 use crate::track::Track;
 use crate::view::{View, AH, AW};
@@ -24,8 +24,6 @@ pub struct Spectrogram {
     /// forever, so single-frame noise must be damped BEFORE it fossilises.
     disp: [f32; N_BANDS],
     width: usize,
-    gain: f32,
-    focus: f32,
 }
 
 impl Spectrogram {
@@ -35,8 +33,6 @@ impl Spectrogram {
             env: [0.0; N_BANDS],
             disp: [0.0; N_BANDS],
             width: 260,
-            gain: 1.2,
-            focus: 0.0,
         }
     }
 }
@@ -60,19 +56,12 @@ impl Mode for Spectrogram {
     }
 
     fn params(&self) -> Vec<Param> {
-        vec![
-            Param::float("Gain", self.gain, 0.4, 3.0),
-            Param::int("History", self.width as i32, 80, 480),
-            Param::float("Focus", self.focus, 0.0, 1.0),
-        ]
+        vec![Param::int("History", self.width as i32, 80, 480)]
     }
 
     fn set_param(&mut self, name: &str, v: f32) {
-        match name {
-            "Gain" => self.gain = v,
-            "History" => self.width = (v.round() as usize).max(8),
-            "Focus" => self.focus = v,
-            _ => {}
+        if name == "History" {
+            self.width = (v.round() as usize).max(8);
         }
     }
 
@@ -87,7 +76,7 @@ impl Mode for Spectrogram {
         let mut col = [0.0f32; N_BANDS];
         for i in 0..N_BANDS {
             // ^1.1 pushes quiet bins down toward the ink floor (bimodal panel).
-            let raw = (focus_band(&ctx.feat.bands, i, self.focus) * self.gain).clamp(0.0, 1.0).powf(1.1);
+            let raw = ctx.feat.bands[i].powf(1.1);
             // Show the level ABOVE a slow per-band envelope (plus a small floor),
             // so sustained loud bass settles to teal and the quiet noise stays ink.
             self.env[i] += (raw - self.env[i]) * 0.05;
