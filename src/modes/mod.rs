@@ -15,6 +15,7 @@ pub mod spectrogram;
 pub mod spectrum;
 pub mod starfield;
 pub mod surfer;
+pub mod terrain;
 pub mod tunnel;
 pub mod vinyl;
 
