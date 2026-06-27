@@ -18,7 +18,7 @@ use std::sync::mpsc::{channel, Receiver};
 
 use crate::analysis::N_BANDS;
 use crate::modes::{Category, FrameCtx, Mode, Param};
-use crate::style::{self, amber, hash01, mix, slate, spec, teal, teal_deep, with_alpha};
+use crate::style::{amber, hash01, mix, slate, spec, teal, teal_deep, with_alpha};
 use crate::track::Track;
 use crate::view::{View, AH, AW};
 
@@ -612,8 +612,14 @@ impl Mode for Breakout {
             v.line(x0, y0, x1, y1, 4.0 + flash * 1.5, crest);
         }
 
-        // Ball: the single hero.
+        // Ball: the single hero — a SOLID amber disc with a soft halo and a
+        // small top highlight (kept solid by request, unlike the soft glow_core
+        // used for decorative glows elsewhere).
         let pos = self.bodies[self.ball].translation();
-        style::glow_core(&v, pos.x, pos.y, BALL_R * self.ball_size, amber());
+        let r = BALL_R * self.ball_size;
+        v.circle(pos.x, pos.y, r * 2.2, with_alpha(amber(), 0.12));
+        v.circle(pos.x, pos.y, r * 1.5, with_alpha(amber(), 0.22));
+        v.circle(pos.x, pos.y, r, amber());
+        v.circle(pos.x, pos.y + r * 0.3, r * 0.36, with_alpha(spec(), 0.5));
     }
 }
