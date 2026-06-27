@@ -17,6 +17,8 @@ pub struct Radial {
     rot: f32,
     flash: f32,
     inner: f32,
+    len: f32,
+    spin: f32,
 }
 
 impl Radial {
@@ -28,6 +30,8 @@ impl Radial {
             rot: 0.0,
             flash: 0.0,
             inner: 1.7,
+            len: 1.0,
+            spin: 1.0,
         }
     }
 }
@@ -44,11 +48,18 @@ impl Mode for Radial {
     }
 
     fn params(&self) -> Vec<Param> {
-        vec![Param::float("Inner radius", self.inner, 0.8, 2.0)]
+        vec![
+            Param::float("Inner radius", self.inner, 0.8, 2.0),
+            Param::float("Spoke length", self.len, 0.5, 1.6),
+            Param::float("Spin", self.spin, 0.0, 3.0),
+        ]
     }
     fn set_param(&mut self, name: &str, v: f32) {
-        if name == "Inner radius" {
-            self.inner = v;
+        match name {
+            "Inner radius" => self.inner = v,
+            "Spoke length" => self.len = v,
+            "Spin" => self.spin = v,
+            _ => {}
         }
     }
 
@@ -68,7 +79,7 @@ impl Mode for Radial {
                 self.flash = self.flash.max((s * 0.22).min(0.6));
             }
         }
-        self.rot += dt * (0.05 + ctx.feat.mid * 0.4);
+        self.rot += dt * (0.05 + ctx.feat.mid * 0.4) * self.spin;
         // Spokes track the analysis bands directly (single smoothing is upstream).
         for i in 0..N_BANDS {
             self.heights[i] = ctx.feat.bands[i];
@@ -86,7 +97,7 @@ impl Mode for Radial {
         let v = View::fit_world(AW, AH);
         let (cx, cy) = (AW * 0.5, AH * 0.5);
         let r0 = self.inner * (1.0 + self.flash * 0.12);
-        let maxlen = 2.0;
+        let maxlen = 2.0 * self.len;
 
         // Faint inner ring.
         let segs = 48;

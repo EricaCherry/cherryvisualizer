@@ -21,11 +21,12 @@ pub struct Scope {
     history: VecDeque<Vec<f32>>,
     amp: f32,
     persist: usize,
+    thick: f32,
 }
 
 impl Scope {
     pub fn new() -> Self {
-        Scope { history: VecDeque::new(), amp: 2.6, persist: 16 }
+        Scope { history: VecDeque::new(), amp: 2.6, persist: 16, thick: 1.0 }
     }
 
     fn sample(wave: &[f32]) -> Vec<f32> {
@@ -61,6 +62,7 @@ impl Mode for Scope {
     fn params(&self) -> Vec<Param> {
         vec![
             Param::float("Amplitude", self.amp, 0.5, 5.0),
+            Param::float("Line width", self.thick, 0.4, 3.0),
             Param::int("Persistence", self.persist as i32, 1, 36),
         ]
     }
@@ -68,6 +70,7 @@ impl Mode for Scope {
     fn set_param(&mut self, name: &str, v: f32) {
         match name {
             "Amplitude" => self.amp = v,
+            "Line width" => self.thick = v,
             "Persistence" => self.persist = (v.round() as usize).max(1),
             _ => {}
         }
@@ -99,7 +102,7 @@ impl Mode for Scope {
             let newest = k + 1 == n;
             let age = (k + 1) as f32 / n as f32; // 0 oldest .. 1 newest
             // Sharpen the hero (live trace) vs. body (older sweeps) value split.
-            let width = if newest { 2.5 } else { 1.2 };
+            let width = (if newest { 2.5 } else { 1.2 }) * self.thick;
             let fade = if newest { 1.0 } else { age * age * 0.22 };
             for i in 1..NPTS {
                 let x0 = (i - 1) as f32 / (NPTS - 1) as f32 * AW;

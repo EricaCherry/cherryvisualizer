@@ -430,10 +430,11 @@ impl Mode for RailShooter {
         // Corridor floor + breathing walls — explicit meshes carrying real
         // normals, drawn through the PBR panel material (greeble normal map, lit
         // and fogged in-shader). UVs bake in the tiling so one draw covers the
-        // whole run; the wall height breathes with the bass.
+        // whole run. The corridor geometry is STATIC — it does not pulse with the
+        // beat (the music is read by the ship/enemies/lasers, not the walls).
         let floor_c = mix(teal_deep(), teal(), 0.18);
         let wall_c = mix(slate(), teal_deep(), 0.3);
-        let wall_h = 4.0 * (0.7 + 0.5 * feat.bass);
+        let wall_h = 3.4;
         let (zn, zf) = (6.0f32, -FAR);
         let vz = 0.12; // along-corridor tiling rate
         let mut cv: Vec<Vertex> = Vec::with_capacity(12);

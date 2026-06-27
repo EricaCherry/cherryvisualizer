@@ -20,7 +20,8 @@ pub struct Spectrum {
     caps: [f32; N_BANDS],
     cap_vel: [f32; N_BANDS],
     flash: f32,
-    gap: f32, // cosmetic bar spacing (audioMotion barSpace)
+    gap: f32,    // cosmetic bar spacing (audioMotion barSpace)
+    height: f32, // cosmetic display scale on the bar height
 }
 
 impl Spectrum {
@@ -31,6 +32,7 @@ impl Spectrum {
             cap_vel: [0.0; N_BANDS],
             flash: 0.0,
             gap: 0.22,
+            height: 1.0,
         }
     }
 }
@@ -49,12 +51,17 @@ impl Mode for Spectrum {
     }
 
     fn params(&self) -> Vec<Param> {
-        vec![Param::float("Bar gap", self.gap, 0.0, 0.6)]
+        vec![
+            Param::float("Bar height", self.height, 0.5, 1.3),
+            Param::float("Bar gap", self.gap, 0.0, 0.6),
+        ]
     }
 
     fn set_param(&mut self, name: &str, v: f32) {
-        if name == "Bar gap" {
-            self.gap = v;
+        match name {
+            "Bar height" => self.height = v,
+            "Bar gap" => self.gap = v,
+            _ => {}
         }
     }
 
@@ -95,7 +102,7 @@ impl Mode for Spectrum {
         }
 
         let base = AH * 0.42; // off-center baseline -> asymmetric negative space
-        let max_h = AH * 0.50; // keep full-scale bars (+ caps) inside the 16x9 world
+        let max_h = AH * 0.50 * self.height;
         let margin = 0.35;
         let usable = AW - margin * 2.0;
         // Log-ish bar widths (wider lows, narrower highs) instead of 32 clones.
@@ -111,7 +118,7 @@ impl Mode for Spectrum {
             let bw = (slot * (1.0 - gap) * jw).max(0.04);
             let bx = x + (slot - bw) * 0.5;
             let by = base + (hash01(i as i32 * 13 + 3) - 0.5) * 0.05 * AH; // baseline jitter
-            let h = (e * max_h).max(0.012);
+            let h = (e * max_h).clamp(0.012, AH - base - 0.3); // stay on-screen
 
             // Every bar is coloured by its OWN level (energy = colour): quiet teal,
             // loud warms to amber — a consistent gradient, no special "hero" bar.

@@ -67,8 +67,6 @@ pub struct Surfer {
     bank_s: f32,
     px_s: f32,
     py_s: f32,
-    spin_s: f32,
-    roll_s: f32,
     squash_s: f32,
     leg_s: f32,
     run_phase: f32,
@@ -89,8 +87,6 @@ impl Surfer {
             bank_s: 0.0,
             px_s: 0.0,
             py_s: 0.0,
-            spin_s: 0.0,
-            roll_s: 0.0,
             squash_s: 1.0,
             leg_s: 1.0,
             run_phase: 0.0,
@@ -135,9 +131,9 @@ impl Surfer {
             let k = ((d - (e.d - ARC_M)) / (2.0 * ARC_M)).clamp(0.0, 1.0);
             let bump = (k * std::f32::consts::PI).sin();
             match e.kind {
-                Kind::Block => y = y.max(bump * APEX * (0.85 + 0.08 * e.strength)),
-                Kind::Pit => y = y.min(-bump * 0.5),
-                _ => {}
+                // Every obstacle except a gap is a hurdle the runner HOPS over.
+                Kind::Pit => y = y.min(-bump * 0.4),
+                _ => y = y.max(bump * APEX * (0.8 + 0.06 * e.strength)),
             }
             i += 1;
         }
@@ -243,47 +239,15 @@ fn draw_creature(pivot: Vec3, spin: f32, roll: f32, squash: f32, leg: f32, run: 
 
 // ---- obstacle glyphs (all built from bold segments, no plain cubes) ---------
 
-/// BLOCK → a rounded archway to leap through.
-fn draw_arch(x: f32, base: f32, z: f32, w: f32, c: Color) {
-    let post = 0.45;
-    seg3d(vec3(x - w, base, z), vec3(x - w, base + post, z), 0.14, c);
-    seg3d(vec3(x + w, base, z), vec3(x + w, base + post, z), 0.14, c);
-    let cy = base + post;
-    let segs = 12;
-    let mut prev = vec3(x - w, cy, z);
-    for k in 1..=segs {
-        let a = std::f32::consts::PI * (1.0 - k as f32 / segs as f32);
-        let p = vec3(x + a.cos() * w, cy + a.sin() * w, z);
-        seg3d(prev, p, 0.14, c);
-        prev = p;
-    }
-}
-
-/// LOOP → a ring to spin through.
-fn draw_ring(x: f32, cy: f32, z: f32, r: f32, c: Color, treble: f32) {
-    let segs = 18;
-    let mut prev: Option<Vec3> = None;
-    for k in 0..=segs {
-        let a = k as f32 / segs as f32 * std::f32::consts::TAU;
-        let p = vec3(x + a.cos() * r, cy + a.sin() * r, z);
-        if let Some(q) = prev {
-            seg3d(q, p, 0.07 + 0.04 * treble, c);
-        }
-        prev = Some(p);
-    }
-}
-
-/// WAVE → a low zig-zag of teeth to roll over.
-fn draw_teeth(x: f32, base: f32, z: f32, w: f32, amp: f32, c: Color) {
-    let n = 6;
-    let mut prev = vec3(x - w, base + 0.08, z);
-    for k in 1..=n {
-        let f = k as f32 / n as f32;
-        let yy = base + 0.08 + if k % 2 == 0 { 0.0 } else { amp };
-        let p = vec3(x - w + 2.0 * w * f, yy, z);
-        seg3d(prev, p, 0.08, c);
-        prev = p;
-    }
+/// A solid HURDLE to hop: two posts and a bold top bar across the track. The
+/// runner's hop apex (~1.2) clears the bar at base+0.75.
+fn draw_hurdle(x: f32, base: f32, z: f32, w: f32, c: Color) {
+    let bar = base + 0.72;
+    seg3d(vec3(x - w, base, z), vec3(x - w, bar, z), 0.12, c);
+    seg3d(vec3(x + w, base, z), vec3(x + w, bar, z), 0.12, c);
+    seg3d(vec3(x - w, bar, z), vec3(x + w, bar, z), 0.17, c); // bold cross-bar
+    // a faint second rail just below, so it reads as a solid gate not a wire
+    seg3d(vec3(x - w, bar - 0.22, z), vec3(x + w, bar - 0.22, z), 0.10, c);
 }
 
 /// PIT → the ribbon already dips; edge the mouth with two lip lines.
@@ -353,8 +317,6 @@ impl Mode for Surfer {
         self.bank_s = 0.0;
         self.px_s = 0.0;
         self.py_s = 0.0;
-        self.spin_s = 0.0;
-        self.roll_s = 0.0;
         self.squash_s = 1.0;
         self.leg_s = 1.0;
         self.run_phase = 0.0;
@@ -382,28 +344,16 @@ impl Mode for Surfer {
         self.py_s += (py - self.py_s) * ks;
         self.bank_s += (raw_bank - self.bank_s) * (1.0 - (-dt * 6.0).exp());
         self.fov_s += (raw_fov - self.fov_s) * (1.0 - (-dt * 8.0).exp());
-        // Pose targets from the active obstacle, eased so the creature morphs
-        // continuously instead of snapping at the window edges.
-        let (mut tspin, mut troll, mut tsq, mut tleg) = (0.0f32, 0.0f32, 1.0f32, 1.0f32);
+        // Subtle pose, eased: a small squash on the airborne hop, legs stretching
+        // over a gap. NO spinning or rolling — the runner just hops the hurdle.
+        let (mut tsq, mut tleg) = (1.0f32, 1.0f32);
         if let Some((e, k)) = self.active_event(d_now) {
-            let ss = k * k * (3.0 - 2.0 * k);
             let bump = (k * std::f32::consts::PI).sin();
-            let mut apply = |kind: Kind| match kind {
-                Kind::Loop => tspin += std::f32::consts::TAU * ss,
-                Kind::Wave => {
-                    troll += std::f32::consts::TAU * ss;
-                    tsq *= 1.0 - 0.4 * bump;
-                }
-                Kind::Pit => tleg *= 1.0 + bump,
-                Kind::Block => {}
-            };
-            apply(e.kind);
-            if let Some(d2) = e.double {
-                apply(d2);
+            match e.kind {
+                Kind::Pit => tleg *= 1.0 + 0.6 * bump, // stride over the gap
+                _ => tsq *= 1.0 - 0.12 * bump,          // light squash on the hop
             }
         }
-        self.spin_s += (tspin - self.spin_s) * ks;
-        self.roll_s += (troll - self.roll_s) * ks;
         self.squash_s += (tsq - self.squash_s) * ks;
         self.leg_s += (tleg - self.leg_s) * ks;
         // Run cycle advances smoothly (decoupled from absolute distance).
@@ -583,15 +533,11 @@ impl Mode for Surfer {
             let near = (1.0 - ((e.t - t).abs() / 0.18).min(1.0)).max(0.0);
             let sn = ((e.strength - 1.3) / 2.7).clamp(0.0, 1.0);
             let c = mix(grade(0.58 + sn * 0.4), amber(), near * 0.55);
+            // One clear, solid obstacle vocabulary: a HURDLE the runner hops, or a
+            // GAP it strides over. No rings/teeth (those implied spins/rolls).
             match e.kind {
-                Kind::Block => draw_arch(x, base, z, 1.55, c),
-                Kind::Loop => draw_ring(x, 0.95 + base, z, 0.92, c, feat.treble),
-                Kind::Wave => draw_teeth(x, base, z, ROAD_HALF * 0.8, 0.22 + sn * 0.3, c),
                 Kind::Pit => draw_pit(x, base, z, ROAD_HALF * 0.7, c),
-            }
-            // The strongest hits double up — a second small ring above the arch.
-            if e.double.is_some() && z < 2.0 {
-                draw_ring(x, base + 2.2, z, 0.45, mix(c, spec(), 0.3), feat.treble);
+                _ => draw_hurdle(x, base, z, 1.3 + sn * 0.3, c),
             }
         }
 
@@ -620,23 +566,20 @@ impl Mode for Surfer {
             draw_cube(vec3(s.x, s.y, z), vec3(0.07, 0.07, 0.07) * k, None, fog(Color::new(0.98, 0.85, 0.45, 1.0), -z));
         }
 
-        // ---- the avatar: a line-art creature that jumps / spins / rolls -----
-        // Pose comes from the smoothed followers (eased in update()), so it morphs
-        // continuously through obstacles instead of snapping.
-        let (spin_a, roll_a, squash, leg) = (self.spin_s, self.roll_s, self.squash_s, self.leg_s);
-        let grounded = py <= 0.05 && spin_a.abs() < 0.01 && roll_a.abs() < 0.01;
+        // ---- the avatar: a line-art creature that HOPS the hurdles -----------
+        // Subtle, eased pose (squash on the hop, legs stretch over a gap). No
+        // spinning or rolling.
+        let (squash, leg) = (self.squash_s, self.leg_s);
+        let grounded = py <= 0.05;
         let run = self.run_phase.sin();
         let bob = if grounded { run.abs() * 0.05 } else { 0.0 };
         let pivot = vec3(px, py + bob + 0.95, 0.0);
 
         // Shadow grounds the creature.
         draw_plane(vec3(px, 0.015, 0.0), vec2(0.34 * (1.0 - (py / 4.0).min(0.8)), 0.26), None, Color::new(0.0, 0.0, 0.0, 0.32));
-        // A minimal Vib-Ribbon-style line-art creature that morphs as it clears
-        // each obstacle: tucking, stretching its legs over a gap, spinning through
-        // a ring, rolling over teeth.
         let beat = feat.beat.unwrap_or(0.0);
         let creature_c = mix(amber(), spec(), 0.45 + 0.25 * beat.min(1.0));
-        draw_creature(pivot, spin_a, roll_a, squash, leg, run, grounded, creature_c);
+        draw_creature(pivot, 0.0, 0.0, squash, leg, run, grounded, creature_c);
 
         // Vignette over the composited 3D frame.
         view::apply_screen_camera();

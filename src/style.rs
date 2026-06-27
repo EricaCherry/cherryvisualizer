@@ -308,12 +308,12 @@ pub fn grade(t: f32) -> Color {
 /// toward the background (not white), a solid accent core, and a small cream
 /// specular toward the key light. Replaces stacked additive copies.
 pub fn glow_core(v: &View, x: f32, y: f32, r: f32, accent: Color) {
-    let halo = mix(ink(), accent, 0.55);
-    v.circle(x, y, r * 2.7, with_alpha(halo, 0.10));
-    v.circle(x, y, r * 1.7, with_alpha(halo, 0.20));
-    v.circle(x, y, r, accent);
-    // specular toward the off-center key light (upper-left, y is up)
-    v.circle(x - r * 0.30, y + r * 0.30, r * 0.42, with_alpha(spec(), 0.85));
+    // A SOFT radial glow — concentric translucent rings fading outward. No hard
+    // solid disc and no bright off-center "pupil"; those read as a solid eye/orb.
+    v.circle(x, y, r * 2.6, with_alpha(accent, 0.06));
+    v.circle(x, y, r * 1.9, with_alpha(accent, 0.11));
+    v.circle(x, y, r * 1.3, with_alpha(accent, 0.20));
+    v.circle(x, y, r * 0.85, with_alpha(accent, 0.34));
 }
 
 // ---- baked textures (built once per theme, on first use) -------------------
