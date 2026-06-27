@@ -335,26 +335,38 @@ impl Breakout {
     /// Amplitude pulses with loudness.
     /// Returns the largest point movement this frame, so the caller can skip
     /// rebuilding the collider when the surface is effectively still.
-    fn reshape_paddle(&mut self, rms: f32, dt: f32) -> f32 {
+    fn reshape_paddle(&mut self, _rms: f32, dt: f32) -> f32 {
         let n = self.paddle_buf.len();
-        // 1) Downsample the ~140ms window to control points, averaging over a WIDE
-        //    span (a strong low-pass) so only the smooth bass-shaped curve remains.
+        // 1) ZERO-CROSSING TRIGGER — phase-lock the waveform so it HOLDS STILL.
+        //    Without this the window scrolls every frame and scaling the height
+        //    amplifies that scroll into jitter (the exact bug). Find a rising edge
+        //    through zero in the head of the buffer; sample the span after it.
+        // A SHORT span (~35ms) so the waveform reads as a wave in 110 points
+        // instead of being averaged into a flat line.
+        let span = (n / 4).max(1);
+        let mut start = 0usize;
+        for i in 1..(n - span).max(1) {
+            if self.paddle_buf[i - 1] < 0.0 && self.paddle_buf[i] >= 0.0 {
+                start = i;
+                break;
+            }
+        }
+        // 2) Sample the triggered span to control points with only LIGHT averaging
+        //    (anti-alias) — not a heavy low-pass that flattens the amplitude.
         let mut pts = [0.0f32; WAVE_PTS];
-        let span = (n / WAVE_PTS * 2).max(1);
+        let avg = 3usize;
         for i in 0..WAVE_PTS {
-            let center = (i as f32 / (WAVE_PTS - 1) as f32 * (n - 1) as f32) as usize;
-            let lo = center.saturating_sub(span);
-            let hi = (center + span).min(n - 1);
+            let c = start + (i as f32 / (WAVE_PTS - 1) as f32 * (span - 1) as f32) as usize;
+            let lo = c.saturating_sub(avg);
+            let hi = (c + avg).min(n - 1);
             let mut s = 0.0;
             for k in lo..=hi {
                 s += self.paddle_buf[k];
             }
             pts[i] = s / (hi - lo + 1) as f32;
         }
-        // 2) A few [1,2,1] passes round it into a flowing curve. The endpoints
-        //    are smoothed too (edge-replicated) — leaving them raw made them jut
-        //    out from their smoothed neighbours as a spike at each end.
-        for _ in 0..3 {
+        // A couple of [1,2,1] passes (edge-replicated endpoints).
+        for _ in 0..2 {
             let src = pts;
             for i in 0..WAVE_PTS {
                 let l = src[i.saturating_sub(1)];
@@ -362,18 +374,12 @@ impl Breakout {
                 pts[i] = l * 0.25 + src[i] * 0.5 + r * 0.25;
             }
         }
-        // 3) Normalize, then scale up BOLD (loudness-pulsed) around a raised base
-        //    so the full bipolar swing reads, and ease over time so it flows.
-        // Normalize by the curve's RMS (not its peak) so the TYPICAL swing fills
-        // the amplitude — a peaky curve would otherwise read as mostly flat.
-        // Normalise the curve by its RMS (track-independent shape) and drive the
-        // SIZE from the wave-height setting + loudness. The displacement is clamped
-        // SYMMETRICALLY below, so a loud wave reads as a full waveform.
-        let rms_pts = (pts.iter().map(|x| x * x).sum::<f32>() / WAVE_PTS as f32).sqrt().max(0.004);
-        let height = self.paddle_amp * (1.4 + rms * 1.6) / rms_pts;
+        // 3) Scale by a FIXED gain × wave-height. NO per-frame RMS normalisation
+        //    (that fluctuated every frame and amplified jitter); the raw PCM
+        //    amplitude IS the loudness, so quiet stays small and loud fills.
+        const GAIN: f32 = 3.6;
+        let height = self.paddle_amp * GAIN;
         // Centre the wave high enough that it has symmetric room ABOVE and BELOW.
-        // The old low base let loud troughs hit PADDLE_FLOOR and clamp flat, so
-        // only the peaks rose — the "mountain". Now the swing is symmetric.
         let base = PADDLE_BASE_Y + 1.8;
         let half = base - PADDLE_FLOOR - 0.1; // max symmetric excursion
         let st = (dt * 7.0).min(1.0);
