@@ -26,7 +26,7 @@ use crate::view;
 const ROAD_HALF: f32 = 3.4;
 const FAR: f32 = 78.0;
 const BASE_SPEED: f32 = 14.0; // m/s at average loudness
-const APEX: f32 = 1.2; // jump apex height
+const APEX: f32 = 1.7; // jump apex height (clears the hurdle bar with margin)
 const ARC_M: f32 = 4.0; // half-length (m) of one obstacle's clear motion
 const MIN_GAP_M: f32 = 9.0; // > 2*ARC_M, so obstacle windows are disjoint
 
@@ -130,10 +130,11 @@ impl Surfer {
             let e = &self.course[i];
             let k = ((d - (e.d - ARC_M)) / (2.0 * ARC_M)).clamp(0.0, 1.0);
             let bump = (k * std::f32::consts::PI).sin();
-            match e.kind {
-                // Every obstacle except a gap is a hurdle the runner HOPS over.
-                Kind::Pit => y = y.min(-bump * 0.4),
-                _ => y = y.max(bump * APEX * (0.8 + 0.06 * e.strength)),
+            // A HOP that lifts only the avatar over a ground-level hurdle (the
+            // ground/ribbon itself stays flat). A gap changes no height — the legs
+            // stretch into a stride instead.
+            if !matches!(e.kind, Kind::Pit) {
+                y = y.max(bump * APEX * (0.85 + 0.07 * e.strength));
             }
             i += 1;
         }
@@ -239,15 +240,14 @@ fn draw_creature(pivot: Vec3, spin: f32, roll: f32, squash: f32, leg: f32, run: 
 
 // ---- obstacle glyphs (all built from bold segments, no plain cubes) ---------
 
-/// A solid HURDLE to hop: two posts and a bold top bar across the track. The
-/// runner's hop apex (~1.2) clears the bar at base+0.75.
+/// A solid, LOW HURDLE to hop: two short posts and a bold top bar across the
+/// track. Kept low (bar at base+0.5) so the hop clears it with clear margin.
 fn draw_hurdle(x: f32, base: f32, z: f32, w: f32, c: Color) {
-    let bar = base + 0.72;
+    let bar = base + 0.5;
     seg3d(vec3(x - w, base, z), vec3(x - w, bar, z), 0.12, c);
     seg3d(vec3(x + w, base, z), vec3(x + w, bar, z), 0.12, c);
-    seg3d(vec3(x - w, bar, z), vec3(x + w, bar, z), 0.17, c); // bold cross-bar
-    // a faint second rail just below, so it reads as a solid gate not a wire
-    seg3d(vec3(x - w, bar - 0.22, z), vec3(x + w, bar - 0.22, z), 0.10, c);
+    seg3d(vec3(x - w, bar, z), vec3(x + w, bar, z), 0.16, c); // bold cross-bar
+    seg3d(vec3(x - w, base + 0.24, z), vec3(x + w, base + 0.24, z), 0.10, c); // mid rail
 }
 
 /// PIT → the ribbon already dips; edge the mouth with two lip lines.
@@ -447,9 +447,9 @@ impl Mode for Surfer {
             ..Default::default()
         });
 
-        // ---- the ribbon: one undulating triangle-strip mesh -----------------
-        // Its centreline is the SAME surface the avatar reads (so jumps lift the
-        // road, gaps dip it), rippled live by the waveform — the Cherry identity.
+        // ---- the ribbon: one FLAT triangle-strip road, rippled by the live
+        // waveform. It stays flat (the avatar hops; the road does not lift), which
+        // keeps the obstacles on the ground and the lit texture from swimming.
         const RN: usize = 72;
         let wave = ctx.wave;
         let mut verts: Vec<Vertex> = Vec::with_capacity(RN * 3);
@@ -459,19 +459,18 @@ impl Mode for Surfer {
             let f = i as f32 / (RN - 1) as f32;
             let z = 2.0 - f * 70.0;
             let d = d_now - z; // z = -(d - d_now)
-            let ripple = wave[(i * 3) % wave.len()] * 0.16 * (0.4 + feat.treble);
-            let h = self.surface_y(d) + ripple;
+            let ripple = wave[(i * 3) % wave.len()] * 0.14 * (0.4 + feat.treble);
+            let h = ripple; // FLAT road + a subtle live ripple (no obstacle humps)
             let load = prof.loudness_at(self.t_at_dist(d));
             // UN-fogged albedo: the PBR material lights + fogs it in the shader.
-            // v rides cumulative distance so the brushed grooves scroll past.
             let col = grade(0.08 + load * 0.5);
             for j in 0..3 {
                 let fj = j as f32 / 2.0;
                 let xo = (fj - 0.5) * 2.0 * ROAD_HALF;
-                let lift = (fj - 0.5).abs() * 0.5;
+                let lift = (fj - 0.5).abs() * 0.18; // gentle raised edges, won't poke the camera
                 verts.push(Vertex::new(xo, h + lift, z, fj, d, col));
             }
-            edges.push((vec3(-ROAD_HALF, h + 0.5, z), vec3(ROAD_HALF, h + 0.5, z)));
+            edges.push((vec3(-ROAD_HALF, h + 0.18, z), vec3(ROAD_HALF, h + 0.18, z)));
         }
         for i in 0..RN - 1 {
             for j in 0..2u16 {
@@ -529,7 +528,7 @@ impl Mode for Surfer {
                 continue;
             }
             let x = self.weave(e.d);
-            let base = self.surface_y(e.d);
+            let base = 0.0; // hurdles sit on the FLAT ground; the avatar hops over them
             let near = (1.0 - ((e.t - t).abs() / 0.18).min(1.0)).max(0.0);
             let sn = ((e.strength - 1.3) / 2.7).clamp(0.0, 1.0);
             let c = mix(grade(0.58 + sn * 0.4), amber(), near * 0.55);
@@ -567,16 +566,18 @@ impl Mode for Surfer {
         }
 
         // ---- the avatar: a line-art creature that HOPS the hurdles -----------
-        // Subtle, eased pose (squash on the hop, legs stretch over a gap). No
-        // spinning or rolling.
+        // The hop reads the height field DIRECTLY (it's a smooth sine, no jitter)
+        // so the apex is reached fully and clears the bar — the camera-smoothed
+        // py would flatten the peak and the bunny would clip the hurdle.
+        let pyj = self.surface_y(d_now);
         let (squash, leg) = (self.squash_s, self.leg_s);
-        let grounded = py <= 0.05;
+        let grounded = pyj <= 0.05;
         let run = self.run_phase.sin();
         let bob = if grounded { run.abs() * 0.05 } else { 0.0 };
-        let pivot = vec3(px, py + bob + 0.95, 0.0);
+        let pivot = vec3(px, pyj + bob + 0.95, 0.0);
 
         // Shadow grounds the creature.
-        draw_plane(vec3(px, 0.015, 0.0), vec2(0.34 * (1.0 - (py / 4.0).min(0.8)), 0.26), None, Color::new(0.0, 0.0, 0.0, 0.32));
+        draw_plane(vec3(px, 0.015, 0.0), vec2(0.34 * (1.0 - (pyj / 4.0).min(0.8)), 0.26), None, Color::new(0.0, 0.0, 0.0, 0.32));
         let beat = feat.beat.unwrap_or(0.0);
         let creature_c = mix(amber(), spec(), 0.45 + 0.25 * beat.min(1.0));
         draw_creature(pivot, 0.0, 0.0, squash, leg, run, grounded, creature_c);

@@ -97,7 +97,6 @@ pub struct RailShooter {
     bursts: Vec<Burst>,
     shells: Vec<Shell>,
     prev_dead: usize,
-    cam_kick: f32,
     flash: f32,
     // live-tunable
     p_fire: f32,
@@ -120,7 +119,6 @@ impl RailShooter {
             bursts: Vec::new(),
             shells: Vec::new(),
             prev_dead: 0,
-            cam_kick: 0.0,
             flash: 0.0,
             p_fire: 1.0,
             p_density: 1.0,
@@ -325,18 +323,13 @@ impl Mode for RailShooter {
         self.bursts.clear();
         self.shells.clear();
         self.prev_dead = 0;
-        self.cam_kick = 0.0;
         self.flash = 0.0;
     }
 
     fn update(&mut self, ctx: &FrameCtx) {
         let dt = ctx.dt;
         let t = ctx.time;
-        self.cam_kick = (self.cam_kick - dt * 3.0).max(0.0);
         self.flash = (self.flash - dt * 2.5).max(0.0);
-        if let Some(s) = ctx.feat.beat {
-            self.cam_kick = (s * 0.12).min(0.4);
-        }
 
         // Enemies whose hit moment just passed -> spawn debris + a shockwave.
         let dead = self.enemies.partition_point(|e| e.hit_t <= t);
@@ -414,9 +407,11 @@ impl Mode for RailShooter {
         }
 
         // ================= 3D pass ===========================================
-        let fov = (60.0 + feat.rms * 10.0 + self.cam_kick * 14.0).to_radians();
+        // Static camera: a steady FOV and height — no beat zoom, no beat kick.
+        // (px is the slow ship weave; roll is the deliberate barrel-roll move.)
+        let fov = 62.0_f32.to_radians();
         let up = vec3((roll + bank).sin(), (roll + bank).cos(), 0.0).normalize();
-        let cam_pos = vec3(px * 0.7, 2.3 + self.cam_kick * 0.12, 5.4);
+        let cam_pos = vec3(px * 0.7, 2.3, 5.4);
         set_camera(&Camera3D {
             position: cam_pos,
             target: vec3(px * 0.85, 1.05, -8.0),
@@ -475,7 +470,7 @@ impl Mode for RailShooter {
                 metal: 0.6,
                 rough: 0.9,
                 tile: vec2(1.0, 1.0),
-                pulse: feat.bass * 0.5 + feat.beat.unwrap_or(0.0) * 0.4,
+                pulse: 0.0, // corridor lighting is STATIC — it must not react to the beat
             },
         );
         draw_mesh(&Mesh { vertices: cv, indices: ci, texture: None });
