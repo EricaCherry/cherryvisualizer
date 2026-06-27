@@ -6,7 +6,7 @@ use macroquad::prelude::*;
 
 use crate::analysis::N_BANDS;
 use crate::modes::{FrameCtx, Mode, Param};
-use crate::style::{grade, hash01, mix, spec, teal_deep, with_alpha};
+use crate::style::{grade, hash01, teal_deep, with_alpha};
 use crate::track::Track;
 use crate::view::{View, AH, AW};
 
@@ -76,12 +76,8 @@ impl Mode for Mirror {
             // Every bar coloured by its own level (energy = colour); no "hero".
             let c = grade(0.12 + e * 0.82);
             let a = 0.4 + 0.6 * e;
-            // The bar mirrored above and below the centre line.
+            // Flat bar mirrored above and below the centre line — no white tips.
             v.rect(bx, cy + h, bw, h * 2.0, with_alpha(c, a));
-            // Cream tips at both ends within the bar's own family.
-            let tip = with_alpha(mix(c, spec(), 0.3), a);
-            v.rect(bx, cy + h, bw, (h * 0.12).min(0.12), tip);
-            v.rect(bx, cy - h + (h * 0.12).min(0.12), bw, (h * 0.12).min(0.12), tip);
         }
         // A faint centre line keeps the symmetry reading.
         v.rect(0.0, cy + 0.012, AW, 0.024, with_alpha(teal_deep(), 0.4));

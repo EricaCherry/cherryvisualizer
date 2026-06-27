@@ -11,7 +11,7 @@ use macroquad::prelude::*;
 
 use crate::analysis::N_BANDS;
 use crate::modes::{FrameCtx, Mode, Param};
-use crate::style::{grade, hash01, mix, spec, teal_deep, with_alpha};
+use crate::style::{grade, hash01, teal_deep, with_alpha};
 use crate::track::Track;
 use crate::view::{View, AH, AW};
 
@@ -124,9 +124,8 @@ impl Mode for Spectrum {
             // loud warms to amber — a consistent gradient, no special "hero" bar.
             let c = grade(0.12 + e * 0.82);
             let a = 0.4 + 0.6 * e;
-            v.rect(bx, by, bw, (h * 0.16).min(0.45), with_alpha(c, 0.10 * a)); // underglow
-            v.rect(bx, by + h, bw, h, with_alpha(c, a)); // the bar
-            v.rect(bx, by + h, bw, (h * 0.10).min(0.10), with_alpha(mix(c, spec(), 0.30), a)); // tip
+            // Flat bar — no underglow, no white tip.
+            v.rect(bx, by + h, bw, h, with_alpha(c, a));
 
             // Peak-hold cap, same colour family (no amber dot).
             if e > 0.02 {

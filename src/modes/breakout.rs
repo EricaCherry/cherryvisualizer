@@ -13,7 +13,6 @@
 
 use macroquad::prelude::*;
 use rapier2d::prelude::*;
-use std::collections::VecDeque;
 use std::sync::mpsc::{channel, Receiver};
 
 use crate::analysis::N_BANDS;
@@ -30,7 +29,6 @@ const PADDLE_BASE_Y: f32 = 0.5;
 const PADDLE_FLOOR: f32 = 0.1;
 const WAVE_PTS: usize = 110;
 const BRICK_TOP: f32 = 8.85;
-const TRAIL_LEN: usize = 22;
 
 // Defaults for the live-tunable settings exposed via params().
 const DEF_BALL_SPEED: f32 = 3.5;
@@ -65,6 +63,12 @@ struct Shard {
     color: Color,
 }
 
+#[derive(Clone, Copy)]
+struct Ball {
+    body: RigidBodyHandle,
+    collider: ColliderHandle,
+}
+
 pub struct Breakout {
     bodies: RigidBodySet,
     colliders: ColliderSet,
@@ -78,8 +82,8 @@ pub struct Breakout {
     params: IntegrationParameters,
 
     static_body: RigidBodyHandle,
-    ball: RigidBodyHandle,
-    ball_collider: ColliderHandle,
+    balls: Vec<Ball>,
+    n_balls: usize,
     paddle: ColliderHandle,
     bricks: Vec<Brick>,
     total_bricks: u32,
@@ -103,7 +107,6 @@ pub struct Breakout {
     /// Per-point paddle height, temporally smoothed (what is drawn + collided).
     paddle_y: Vec<f32>,
     paddle_world: Vec<(f32, f32)>,
-    trail: VecDeque<(f32, f32)>,
     shards: Vec<Shard>,
     paddle_flash: f32,
     boost: f32,
@@ -175,8 +178,8 @@ impl Breakout {
             pipeline: PhysicsPipeline::new(),
             params,
             static_body,
-            ball,
-            ball_collider,
+            balls: vec![Ball { body: ball, collider: ball_collider }],
+            n_balls: 1,
             paddle,
             bricks: Vec::new(),
             total_bricks: 0,
@@ -193,7 +196,6 @@ impl Breakout {
             paddle_buf: vec![0.0; 6144],
             paddle_y: vec![PADDLE_BASE_Y; WAVE_PTS],
             paddle_world: vec![(0.0, PADDLE_BASE_Y); WAVE_PTS],
-            trail: VecDeque::new(),
             shards: Vec::new(),
             paddle_flash: 0.0,
             boost: 1.0,
@@ -254,14 +256,60 @@ impl Breakout {
         self.total_bricks = self.bricks.len() as u32;
     }
 
-    fn serve(&mut self) {
+    /// Spawn one ball body + collider (no gravity; speed held each frame).
+    fn add_ball(&mut self) {
+        let rb = RigidBodyBuilder::dynamic().ccd_enabled(true).build();
+        let body = self.bodies.insert(rb);
+        let col = ColliderBuilder::ball(BALL_R * self.ball_size)
+            .restitution(1.0)
+            .restitution_combine_rule(CoefficientCombineRule::Max)
+            .friction(0.0)
+            .active_events(ActiveEvents::COLLISION_EVENTS)
+            .build();
+        let collider = self.colliders.insert_with_parent(col, body, &mut self.bodies);
+        self.balls.push(Ball { body, collider });
+    }
+
+    /// Grow/shrink the live ball set to `n` (1..6), then re-serve.
+    fn set_ball_count(&mut self, n: usize) {
+        let n = n.clamp(1, 6);
+        while self.balls.len() < n {
+            self.add_ball();
+        }
+        while self.balls.len() > n {
+            if let Some(b) = self.balls.pop() {
+                self.bodies.remove(
+                    b.body,
+                    &mut self.islands,
+                    &mut self.colliders,
+                    &mut self.impulse_joints,
+                    &mut self.multibody_joints,
+                    true,
+                );
+            }
+        }
+        self.n_balls = n;
+        self.serve();
+    }
+
+    /// Serve ball `i` from an off-center start with a random angle, spread across
+    /// the court so multiple balls don't stack.
+    fn serve_ball(&mut self, i: usize) {
+        let n = self.balls.len().max(1);
+        let body = self.balls[i].body;
         let dir = if macroquad::rand::gen_range(0.0, 1.0) < 0.5 { -1.0 } else { 1.0 };
         let vx = macroquad::rand::gen_range(1.6, 2.8) * dir;
         let speed = self.ball_speed;
-        if let Some(rb) = self.bodies.get_mut(self.ball) {
-            // Serve off-center so the ball owns the asymmetric negative space.
-            rb.set_translation(Vector::new(AW * 0.36, AH * 0.35), true);
+        let x = AW * (0.28 + 0.44 * (i as f32 + 0.5) / n as f32);
+        if let Some(rb) = self.bodies.get_mut(body) {
+            rb.set_translation(Vector::new(x, AH * 0.35), true);
             rb.set_linvel(Vector::new(vx, speed), true);
+        }
+    }
+
+    fn serve(&mut self) {
+        for i in 0..self.balls.len() {
+            self.serve_ball(i);
         }
     }
 
@@ -369,6 +417,7 @@ impl Mode for Breakout {
 
     fn params(&self) -> Vec<Param> {
         vec![
+            Param::int("Balls", self.n_balls as i32, 1, 6),
             Param::float("Ball speed", self.ball_speed, 1.5, 9.0),
             Param::float("Ball size", self.ball_size, 0.5, 2.5),
             Param::float("Wave height", self.paddle_amp, 0.3, 3.5),
@@ -381,11 +430,15 @@ impl Mode for Breakout {
 
     fn set_param(&mut self, name: &str, v: f32) {
         match name {
+            "Balls" => self.set_ball_count(v.round() as usize),
             "Ball speed" => self.ball_speed = v,
             "Ball size" => {
                 self.ball_size = v;
-                if let Some(c) = self.colliders.get_mut(self.ball_collider) {
-                    c.set_shape(SharedShape::ball(BALL_R * v));
+                let cs: Vec<_> = self.balls.iter().map(|b| b.collider).collect();
+                for c in cs {
+                    if let Some(col) = self.colliders.get_mut(c) {
+                        col.set_shape(SharedShape::ball(BALL_R * v));
+                    }
                 }
             }
             "Wave height" => self.paddle_amp = v,
@@ -425,7 +478,6 @@ impl Mode for Breakout {
         }
         self.score = 0;
         self.boost = 1.0;
-        self.trail.clear();
         self.shards.clear();
         for y in &mut self.paddle_y {
             *y = PADDLE_BASE_Y;
@@ -477,13 +529,10 @@ impl Mode for Breakout {
         }
         for e in events {
             let CollisionEvent::Started(h1, h2, _) = e else { continue };
-            let other = if h1 == self.ball_collider {
-                h2
-            } else if h2 == self.ball_collider {
-                h1
-            } else {
-                continue;
-            };
+            // Either collider may be one of our balls.
+            let b1 = self.balls.iter().any(|b| b.collider == h1);
+            let b2 = self.balls.iter().any(|b| b.collider == h2);
+            let other = if b1 { h2 } else if b2 { h1 } else { continue };
             if other == self.paddle {
                 self.paddle_flash = 1.0;
             } else if let Some(i) = self.bricks.iter().position(|b| b.handle == other && b.alive) {
@@ -504,38 +553,38 @@ impl Mode for Breakout {
             }
         }
 
-        // 5) Hold the ball at a constant (loudness-scaled) speed; keep a real
+        // 5) Hold EACH ball at a constant (loudness-scaled) speed; keep a real
         //    vertical component so it always travels to the wall and back.
         let target = (self.ball_speed + feat.rms * 1.0) * self.boost;
-        if let Some(rb) = self.bodies.get_mut(self.ball) {
-            let mut v = rb.linvel();
-            let sp = (v.x * v.x + v.y * v.y).sqrt();
-            if sp > 1e-3 {
-                v *= target / sp;
-            } else {
-                v = Vector::new(target * 0.4, target);
+        let bodies: Vec<_> = self.balls.iter().map(|b| b.body).collect();
+        for body in &bodies {
+            if let Some(rb) = self.bodies.get_mut(*body) {
+                let mut v = rb.linvel();
+                let sp = (v.x * v.x + v.y * v.y).sqrt();
+                if sp > 1e-3 {
+                    v *= target / sp;
+                } else {
+                    v = Vector::new(target * 0.4, target);
+                }
+                let min_vy = target * 0.34;
+                if v.y.abs() < min_vy {
+                    v.y = if v.y < 0.0 { -min_vy } else { min_vy };
+                    let vx2 = (target * target - v.y * v.y).max(0.0).sqrt();
+                    v.x = if v.x < 0.0 { -vx2 } else { vx2 };
+                }
+                rb.set_linvel(v, true);
             }
-            let min_vy = target * 0.34;
-            if v.y.abs() < min_vy {
-                v.y = if v.y < 0.0 { -min_vy } else { min_vy };
-                let vx2 = (target * target - v.y * v.y).max(0.0).sqrt();
-                v.x = if v.x < 0.0 { -vx2 } else { vx2 };
-            }
-            rb.set_linvel(v, true);
         }
 
-        // 6) Recover if the ball slips past the paddle or a wall.
-        let pos = self.bodies[self.ball].translation();
-        if pos.y < -0.5 || pos.y > AH + 1.0 || pos.x < -1.0 || pos.x > AW + 1.0 {
-            self.serve();
+        // 6) Recover any ball that slips past the paddle or a wall.
+        for i in 0..self.balls.len() {
+            let pos = self.bodies[self.balls[i].body].translation();
+            if pos.y < -0.5 || pos.y > AH + 1.0 || pos.x < -1.0 || pos.x > AW + 1.0 {
+                self.serve_ball(i);
+            }
         }
 
-        // 7) Trail + shards + brick pop animation.
-        let pos = self.bodies[self.ball].translation();
-        self.trail.push_back((pos.x, pos.y));
-        if self.trail.len() > TRAIL_LEN {
-            self.trail.pop_front();
-        }
+        // 7) Shards + brick pop animation.
         for s in &mut self.shards {
             s.x += s.vx * dt;
             s.y += s.vy * dt;
@@ -612,14 +661,11 @@ impl Mode for Breakout {
             v.line(x0, y0, x1, y1, 4.0 + flash * 1.5, crest);
         }
 
-        // Ball: the single hero — a SOLID amber disc with a soft halo and a
-        // small top highlight (kept solid by request, unlike the soft glow_core
-        // used for decorative glows elsewhere).
-        let pos = self.bodies[self.ball].translation();
+        // Balls: FLAT solid amber discs — no glow halo, no white highlight.
         let r = BALL_R * self.ball_size;
-        v.circle(pos.x, pos.y, r * 2.2, with_alpha(amber(), 0.12));
-        v.circle(pos.x, pos.y, r * 1.5, with_alpha(amber(), 0.22));
-        v.circle(pos.x, pos.y, r, amber());
-        v.circle(pos.x, pos.y + r * 0.3, r * 0.36, with_alpha(spec(), 0.5));
+        for b in &self.balls {
+            let pos = self.bodies[b.body].translation();
+            v.circle(pos.x, pos.y, r, amber());
+        }
     }
 }
