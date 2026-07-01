@@ -64,7 +64,7 @@ impl Mode for Vinyl {
         let (cx, cy) = (AW * 0.5, AH * 0.5);
         let outer = 3.6;
         let wave = ctx.wave;
-        let norm = 1.0; // raw PCM scale; loudness enters via the rms factor below
+        let norm = 1.0; // calibrated PCM scale; loudness enters via the rms factor below
 
         // Disc body: a dark filled platter with a faint sheen ring.
         v.circle(cx, cy, outer, mix(ink(), slate(), 0.75));

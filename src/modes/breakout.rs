@@ -375,8 +375,9 @@ impl Breakout {
             }
         }
         // 3) Scale by a FIXED gain × wave-height. NO per-frame RMS normalisation
-        //    (that fluctuated every frame and amplified jitter); the raw PCM
-        //    amplitude IS the loudness, so quiet stays small and loud fills.
+        //    (that fluctuated every frame and amplified jitter); the PCM
+        //    amplitude IS the loudness (per-track calibrated in window_at),
+        //    so quiet stays small and loud fills.
         const GAIN: f32 = 3.6;
         let height = self.paddle_amp * GAIN;
         // Centre the wave high enough that it has symmetric room ABOVE and BELOW.

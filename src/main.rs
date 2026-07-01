@@ -76,6 +76,23 @@ const MODES: [fn() -> Box<dyn Mode>; 17] = [
 ];
 const MODE_COUNT: usize = MODES.len();
 
+/// Picker groups, in display order: the game-likes lead, then the traditional
+/// visualizers. Shared by the Modes tab AND Tab-key cycling so the keyboard
+/// walks the exact sequence the sidebar shows.
+const GROUPS: [(Category, &str); 2] =
+    [(Category::Game, "Game-likes"), (Category::Visualizer, "Visualizers")];
+
+/// The mode after `sel` in the picker's DISPLAYED order (groups first, registry
+/// order within each group).
+fn next_mode(modes: &[Box<dyn Mode>], sel: usize) -> usize {
+    let order: Vec<usize> = GROUPS
+        .iter()
+        .flat_map(|(c, _)| (0..modes.len()).filter(move |&i| modes[i].category() == *c))
+        .collect();
+    let pos = order.iter().position(|&i| i == sel).unwrap_or(0);
+    order[(pos + 1) % order.len().max(1)]
+}
+
 /// Build a fresh instance of mode `i` (clamped). Used both to populate the live
 /// picker and to give the exporter its own untouched copy of the selected mode.
 fn make_mode(i: usize) -> Box<dyn Mode> {
@@ -593,7 +610,7 @@ async fn main() {
                     actions.push(Action::RestartMode);
                 }
                 if is_key_pressed(KeyCode::Tab) {
-                    actions.push(Action::SelectMode(if active { (sel + 1) % modes.len() } else { sel }));
+                    actions.push(Action::SelectMode(if active { next_mode(&modes, sel) } else { sel }));
                 }
             }
 
@@ -958,26 +975,53 @@ fn build_ui(ctx: &egui::Context, data: &UiData, ui: &mut UiState, actions: &mut 
 
 fn tab_modes(ui: &mut egui::Ui, data: &UiData, actions: &mut Vec<Action>) {
     ui.add_space(4.0);
-    for (cat, title) in [(Category::Visualizer, "Visualizers"), (Category::Game, "Games")] {
-        ui.label(egui::RichText::new(title).strong());
-        ui.add_space(2.0);
-        for (i, (name, about, c)) in data.modes.iter().enumerate() {
-            if *c != cat {
-                continue;
-            }
-            let resp = ui.add(
-                egui::Button::new(egui::RichText::new(*name).strong())
-                    .min_size(egui::vec2(ui.available_width(), 0.0))
-                    .selected(i == data.sel && data.active),
-            );
-            if resp.clicked() {
-                actions.push(Action::SelectMode(i));
-            }
-            ui.label(egui::RichText::new(*about).weak().small());
-            ui.add_space(8.0);
+    // The groups fill themselves from the registry: a mode lands under its
+    // `Mode::category()`, empty groups vanish, and each group lays out as a
+    // tile grid that adapts to the sidebar width (1 column when narrow, more
+    // as the panel is dragged wider) instead of one long button list.
+    for (cat, title) in GROUPS {
+        let group: Vec<usize> = (0..data.modes.len()).filter(|&i| data.modes[i].2 == cat).collect();
+        if group.is_empty() {
+            continue;
         }
+        ui.horizontal(|h| {
+            h.label(egui::RichText::new(title).strong());
+            h.label(egui::RichText::new(group.len().to_string()).weak().small());
+        });
         ui.add_space(4.0);
+
+        const MIN_TILE_W: f32 = 104.0;
+        let spacing = ui.spacing().item_spacing.x;
+        let avail = ui.available_width();
+        let cols = (((avail + spacing) / (MIN_TILE_W + spacing)).floor() as usize).max(1);
+        let tile_w = (avail - spacing * (cols as f32 - 1.0)) / cols as f32;
+        for row in group.chunks(cols) {
+            ui.horizontal(|h| {
+                for &i in row {
+                    let (name, about, _) = data.modes[i];
+                    let resp = h
+                        .add_sized(
+                            [tile_w, 40.0],
+                            egui::Button::new(egui::RichText::new(name).strong().size(13.0))
+                                .wrap()
+                                .selected(i == data.sel && data.active),
+                        )
+                        .on_hover_text(about);
+                    if resp.clicked() {
+                        actions.push(Action::SelectMode(i));
+                    }
+                }
+            });
+        }
+        ui.add_space(8.0);
         ui.separator();
+        ui.add_space(4.0);
+    }
+    // One-line description of the current mode (per-tile blurbs live on hover).
+    if data.active {
+        if let Some((_, about, _)) = data.modes.get(data.sel) {
+            ui.label(egui::RichText::new(*about).weak().small());
+        }
     }
 }
 

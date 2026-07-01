@@ -7,8 +7,9 @@
 //!   - TIMEBASE ("Time") sets the horizontal zoom (how much of the window shows);
 //!   - AMPLITUDE is the vertical gain;
 //!   - plus line width, a trigger on/off, and CRT persistence (past sweeps fade).
-//! The raw PCM amplitude IS the loudness, so quiet stays small and loud fills the
-//! screen with no coupling hacks.
+//! The PCM amplitude IS the loudness (per-track calibrated — see
+//! `Track::window_at`), so quiet stays small and loud fills the screen with no
+//! coupling hacks.
 
 use std::collections::VecDeque;
 

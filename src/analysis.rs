@@ -18,7 +18,8 @@ pub const FFT_LEN: usize = 8192;
 /// crisp ~46 ms oscilloscope trace, independent of the longer FFT window).
 pub const WAVE_LEN: usize = 2048;
 
-/// Build the per-frame [`Features`] at time `t`: copy the PCM window, run the
+/// Build the per-frame [`Features`] at time `t`: copy the PCM window (already
+/// scaled by the track's calibration gain — see [`Track::window_at`]), run the
 /// FFT, and fill in the beat from the offline grid (first beat in `(prev_t, t]`).
 /// One recipe for every render path.
 pub fn features_at(
@@ -105,7 +106,11 @@ impl Analyser {
         const SMOOTHING: f32 = 0.5; // audioMotion default
         for k in 0..n_bins {
             let mag = self.spectrum[k].norm() * 2.0 / self.fft_len as f32;
-            self.smoothed[k] = SMOOTHING * self.smoothed[k] + (1.0 - SMOOTHING) * mag;
+            // Skip non-finite magnitudes (corrupt decode): one NaN window must
+            // not poison this persistent EMA — and every band with it — forever.
+            if mag.is_finite() {
+                self.smoothed[k] = SMOOTHING * self.smoothed[k] + (1.0 - SMOOTHING) * mag;
+            }
         }
 
         // STAGE 2: log-spaced bands (20 Hz..20 kHz). Each band = the MAX smoothed
@@ -137,7 +142,9 @@ impl Analyser {
         }
         let rms_lin = (sum_sq / n.max(1) as f32).sqrt();
         let rms_raw = ((20.0 * (rms_lin + 1e-9).log10() + 60.0) / 60.0).clamp(0.0, 1.0);
-        self.rms_s += (rms_raw - self.rms_s) * 0.4; // one EMA (the only loudness smoothing)
+        if rms_raw.is_finite() {
+            self.rms_s += (rms_raw - self.rms_s) * 0.4; // one EMA (the only loudness smoothing)
+        }
         let rms = self.rms_s;
 
         // Broad bands derived from the normalized spectrum (already adaptive,
@@ -164,5 +171,138 @@ impl Analyser {
             treble,
             beat: None, // filled in by the caller from the track's beat grid
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::track::{Profile, Track};
+
+    const SR: u32 = 44_100;
+
+    fn tone(amp: f32, hz: f32, secs: f32) -> Vec<f32> {
+        (0..(secs * SR as f32) as usize)
+            .map(|i| (2.0 * std::f32::consts::PI * hz * i as f32 / SR as f32).sin() * amp)
+            .collect()
+    }
+
+    fn track_of(pcm: Vec<f32>) -> Track {
+        let profile = Profile::analyze(&pcm, SR);
+        Track { name: "test".into(), pcm, sr: SR, profile }
+    }
+
+    /// Run the real per-frame pipeline (window_at -> analyze) and return the
+    /// Features after the EMAs have converged.
+    fn run(track: &Track, frames: u32) -> Features {
+        let mut analyser = Analyser::new(FFT_LEN);
+        let mut window = vec![0.0f32; FFT_LEN];
+        let dt = 1.0 / 60.0;
+        let mut feat = Features::default();
+        for f in 0..frames {
+            let t = f as f32 * dt;
+            feat = features_at(&mut analyser, track, &mut window, t, t - dt, dt);
+        }
+        feat
+    }
+
+    #[test]
+    fn loud_tracks_are_not_recalibrated() {
+        // Anything already near mastering loudness must be bit-identical to the
+        // pre-calibration pipeline (gain exactly 1.0 skips the multiply).
+        let t = track_of(tone(0.6, 220.0, 3.0));
+        assert_eq!(t.profile.analysis_gain, 1.0);
+    }
+
+    #[test]
+    fn quiet_tracks_get_constant_makeup_gain() {
+        // ~-33 dBFS sine wants more than the +18 dB ceiling -> clamped.
+        let t = track_of(tone(0.02, 220.0, 3.0));
+        assert!((t.profile.analysis_gain - 8.0).abs() < 1e-3, "gain {}", t.profile.analysis_gain);
+        // ~-29 dBFS hop RMS 0.035 -> ~x5.7 makeup.
+        let t2 = track_of(tone(0.05, 220.0, 3.0));
+        assert!(
+            t2.profile.analysis_gain > 4.5 && t2.profile.analysis_gain < 7.0,
+            "gain {}",
+            t2.profile.analysis_gain
+        );
+    }
+
+    #[test]
+    fn window_is_calibrated_but_pcm_is_not() {
+        let t = track_of(tone(0.05, 220.0, 3.0));
+        let mut w = vec![0.0f32; FFT_LEN];
+        t.window_at(1.0, &mut w);
+        let peak = w.iter().fold(0.0f32, |m, &v| m.max(v.abs()));
+        let want = 0.05 * t.profile.analysis_gain;
+        assert!((peak - want).abs() < 0.01, "window peak {peak}, want ~{want}");
+        // The decoded pcm (playback + export audio source) stays untouched.
+        let raw = t.pcm.iter().fold(0.0f32, |m, &v| m.max(v.abs()));
+        assert!(raw <= 0.0501, "pcm peak {raw}");
+    }
+
+    #[test]
+    fn quiet_master_reads_like_a_loud_one() {
+        // The same tone mastered 26 dB apart must land in the same visual range
+        // once calibrated; over the raw fixed dB windows the quiet one would
+        // read ~0.43 of full scale lower on rms and visibly lower on bands.
+        let loud = run(&track_of(tone(0.6, 220.0, 3.0)), 40);
+        let quiet = run(&track_of(tone(0.03, 220.0, 3.0)), 40);
+        let peak = |f: &Features| f.bands.iter().fold(0.0f32, |m, &v| m.max(v));
+        assert!(
+            peak(&quiet) > peak(&loud) - 0.15,
+            "band peak quiet {} vs loud {}",
+            peak(&quiet),
+            peak(&loud)
+        );
+        assert!(quiet.rms > loud.rms - 0.2, "rms quiet {} vs loud {}", quiet.rms, loud.rms);
+    }
+
+    #[test]
+    fn sparse_loud_stems_are_not_overdriven() {
+        // 96% silence + short full-level kick hits (a DAW percussion stem):
+        // the hits already sit at mastering level, so calibration must leave
+        // them alone. A percentile over ALL hops would see mostly silence,
+        // read p95 ~ 0, and slam the track to +18 dB.
+        let sr = SR as usize;
+        let mut pcm = vec![0.0f32; sr * 4];
+        let hit = sr / 25; // ~40 ms
+        for beat in 0..4 {
+            for i in 0..hit {
+                let t = i as f32 / SR as f32;
+                let env = 1.0 - i as f32 / hit as f32;
+                pcm[beat * sr + i] = (2.0 * std::f32::consts::PI * 60.0 * t).sin() * 0.6 * env;
+            }
+        }
+        let t = track_of(pcm);
+        assert!(t.profile.analysis_gain < 1.5, "gain {}", t.profile.analysis_gain);
+    }
+
+    #[test]
+    fn corrupt_windows_do_not_poison_the_analyser() {
+        // One NaN sample in a window must not stick in the persistent per-bin
+        // EMA (or the rms EMA) and kill every band forever.
+        let mut analyser = Analyser::new(FFT_LEN);
+        let good: Vec<f32> = tone(0.5, 220.0, 1.0)[..FFT_LEN].to_vec();
+        let mut bad = good.clone();
+        bad[100] = f32::NAN;
+        analyser.analyze(&good, SR, 1.0 / 60.0);
+        analyser.analyze(&bad, SR, 1.0 / 60.0);
+        let after = analyser.analyze(&good, SR, 1.0 / 60.0);
+        assert!(after.bands.iter().all(|v| v.is_finite()), "bands {:?}", after.bands);
+        assert!(after.rms.is_finite() && after.bands.iter().any(|&v| v > 0.5));
+    }
+
+    #[test]
+    fn beats_survive_a_quiet_master() {
+        // A -40 dB master of the same groove must keep its beat grid: the
+        // relative spike test is scale-invariant and the absolute noise floor
+        // is defined post-calibration.
+        let loud = Track::synth_demo();
+        let quiet_pcm: Vec<f32> = loud.pcm.iter().map(|s| s * 0.01).collect();
+        let quiet = Profile::analyze(&quiet_pcm, loud.sr);
+        let (nl, nq) = (loud.profile.beats.len(), quiet.beats.len());
+        assert!(nl > 20, "demo groove should have a real beat grid, got {nl}");
+        assert!(nq as f32 >= nl as f32 * 0.8, "quiet kept {nq} of {nl} beats");
     }
 }

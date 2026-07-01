@@ -36,6 +36,16 @@ pub struct Profile {
     /// Per-hop treble energy (above ~2 kHz), normalized 0..1.
     pub treb: Vec<f32>,
     pub beats: Vec<Beat>,
+    /// Constant per-track makeup gain for the VISUAL signal path (ReplayGain
+    /// style, computed once from the whole track). The realtime analyser maps
+    /// magnitudes over FIXED dB windows — the audioMotion defaults, which
+    /// assume commercially-mastered loudness — so a quietly mastered track
+    /// would otherwise sit at the bottom of every window (half-height bars, a
+    /// flat scope). Applied in [`Track::window_at`]; audible playback and
+    /// exported audio read the raw `pcm` and are untouched. Constant per track
+    /// means no per-frame AGC pumping, deterministic exports, and the track's
+    /// own dynamics survive: quiet PASSAGES still read quieter than loud ones.
+    pub analysis_gain: f32,
 }
 
 impl Profile {
@@ -83,11 +93,36 @@ impl Profile {
             }
         }
 
+        // Per-track calibration: bring the loudness of the track's louder
+        // passages (95th-percentile hop RMS — near-peak but deaf to one stray
+        // transient) up to -14 dBFS, the level the analyser's fixed dB windows
+        // are tuned for. Never attenuate (loud masters already read right) and
+        // cap the boost at +18 dB so a near-silent recording doesn't have its
+        // noise floor dragged on stage. The percentile is taken over the
+        // NON-SILENT (and finite — corrupt decodes) hops only: a sparse stem
+        // or a silence-padded track would otherwise read p95 ≈ 0 and get
+        // slammed to max gain even though its hits already sit at mastering
+        // level. And never boost the loudest hop past -6 dBFS RMS, so
+        // crest-heavy content (quiet bed + full-scale transients) doesn't clip
+        // the scope/paddle waveforms into square tops.
+        const TARGET_RMS: f32 = 0.2; // -14 dBFS
+        const MAX_GAIN: f32 = 8.0; // +18 dB
+        let mut loud_hops: Vec<f32> =
+            rms.iter().copied().filter(|v| v.is_finite() && *v > 1e-4).collect();
+        let analysis_gain = if loud_hops.is_empty() {
+            1.0
+        } else {
+            loud_hops.sort_by(f32::total_cmp);
+            let p95 = loud_hops[(loud_hops.len() * 95 / 100).min(loud_hops.len() - 1)];
+            (TARGET_RMS / p95.max(1e-6)).clamp(1.0, MAX_GAIN).min((0.5 / max_rms).max(1.0))
+        };
+
         // Beats: bass energy spikes over a ~1s trailing average, 220ms apart min.
-        // The absolute floor is RELATIVE to this track's own bass level (not a
-        // fixed number tuned to one demo), so beats are found in any real track.
+        // The relative test is scale-invariant; the absolute noise floor is
+        // defined POST-calibration (divide by the gain) so a quiet master's
+        // real kicks aren't discarded as rumble.
         let low_mean = low.iter().sum::<f32>() / low.len().max(1) as f32;
-        let floor = (low_mean * 0.45).max(0.002);
+        let floor = (low_mean * 0.45).max(0.002 / analysis_gain);
         let mut beats = Vec::new();
         let mut hist_sum = 0.0f32;
         let mut hist = std::collections::VecDeque::new();
@@ -106,7 +141,7 @@ impl Profile {
             }
         }
 
-        Profile { hop_dt, rms, max_rms, mid, treb, beats }
+        Profile { hop_dt, rms, max_rms, mid, treb, beats, analysis_gain }
     }
 
     /// First beat in the half-open interval (t0, t1], if any.
@@ -155,12 +190,22 @@ impl Track {
         self.pcm.len() as f32 / self.sr as f32
     }
 
-    /// Copy the window of samples starting at time `t` into `out` (zero-padded).
+    /// Copy the window of samples starting at time `t` into `out` (zero-padded),
+    /// scaled by the track's calibration gain. This is the single choke point
+    /// for the whole VISUAL signal path — the FFT features and every mode's
+    /// `wave` (including breakout's paddle buffer) — so a quiet master reads
+    /// like a loud one everywhere. Playback and export audio use the raw `pcm`.
     pub fn window_at(&self, t: f32, out: &mut [f32]) {
         let start = ((t * self.sr as f32) as usize).min(self.pcm.len());
         let avail = (self.pcm.len() - start).min(out.len());
         out[..avail].copy_from_slice(&self.pcm[start..start + avail]);
         out[avail..].fill(0.0);
+        let g = self.profile.analysis_gain;
+        if g != 1.0 {
+            for s in &mut out[..avail] {
+                *s *= g;
+            }
+        }
     }
 
     /// Decode any rodio-supported file (mp3/wav/flac/ogg/m4a) to a mono track.
