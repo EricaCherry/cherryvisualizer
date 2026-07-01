@@ -172,11 +172,10 @@ impl Mode for Starfield {
             // Steep falloff so far stars sink into ink instead of all glowing.
             let bright = (0.12 + depth * depth * 1.1).min(1.0);
 
-            if streak > 0.01 {
-                if let Some((tx, ty, _)) = project(s.x, s.y, s.z + streak) {
+            if streak > 0.01
+                && let Some((tx, ty, _)) = project(s.x, s.y, s.z + streak) {
                     v.line(tx, ty, px, py, (r * 90.0).max(1.0), with_alpha(c, 0.4 * bright));
                 }
-            }
             if Some(i) == hero {
                 style::glow_core(&v, px, py, r.max(0.05), amber());
             } else {

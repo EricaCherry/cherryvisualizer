@@ -60,11 +60,10 @@ impl Mode for RingFire {
             self.heights[i] = ctx.feat.bands[i];
         }
         self.flash = (self.flash - ctx.dt * 4.0).max(0.0);
-        if let Some(s) = ctx.feat.beat {
-            if s > 1.8 {
+        if let Some(s) = ctx.feat.beat
+            && s > 1.8 {
                 self.flash = (s * 0.3).min(0.7);
             }
-        }
     }
 
     fn draw(&self, ctx: &FrameCtx) {

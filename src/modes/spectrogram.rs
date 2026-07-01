@@ -24,6 +24,9 @@ pub struct Spectrogram {
     /// forever, so single-frame noise must be damped BEFORE it fossilises.
     disp: [f32; N_BANDS],
     width: usize,
+    /// Accumulator for the fixed 60 Hz column cadence (decoupled from the
+    /// render rate, so "History" spans the same real time at 30 or 60 fps).
+    acc: f32,
 }
 
 impl Spectrogram {
@@ -33,6 +36,7 @@ impl Spectrogram {
             env: [0.0; N_BANDS],
             disp: [0.0; N_BANDS],
             width: 260,
+            acc: 0.0,
         }
     }
 }
@@ -69,6 +73,7 @@ impl Mode for Spectrogram {
         self.cols.clear();
         self.env = [0.0; N_BANDS];
         self.disp = [0.0; N_BANDS];
+        self.acc = 0.0;
     }
 
     fn update(&mut self, ctx: &FrameCtx) {
@@ -79,13 +84,20 @@ impl Mode for Spectrogram {
             let raw = ctx.feat.bands[i].powf(1.1);
             // Show the level ABOVE a slow per-band envelope (plus a small floor),
             // so sustained loud bass settles to teal and the quiet noise stays ink.
-            self.env[i] += (raw - self.env[i]) * 0.05;
+            self.env[i] += (raw - self.env[i]) * (1.0 - (-dt * 3.0).exp());
             col[i] = ((raw - 0.3 * self.env[i] - 0.05).max(0.0) * 1.4).min(1.0);
             // One light EMA before the column is frozen into the scroll, so a
             // single-frame blip can't streak across it.
             self.disp[i] += (col[i] - self.disp[i]) * (1.0 - (-dt / 0.07).exp());
         }
-        self.cols.push_back(self.disp);
+        // Columns freeze into the scroll on a fixed 60 Hz cadence, not once per
+        // render frame — a 30 fps export scrolls at the same speed and spans
+        // the same seconds as the 60 fps live view.
+        self.acc += dt;
+        while self.acc >= 1.0 / 60.0 {
+            self.acc -= 1.0 / 60.0;
+            self.cols.push_back(self.disp);
+        }
         while self.cols.len() > self.width {
             self.cols.pop_front();
         }

@@ -479,7 +479,7 @@ impl Mode for RailShooter {
         // Asteroid scenery (mid-band), tumbling at the sides.
         for r in &self.rocks {
             let z = -(r.d - d_now);
-            if z > 2.0 || z < -FAR {
+            if !(-FAR..=2.0).contains(&z) {
                 continue;
             }
             let s = r.r * (0.7 + 0.45 * feat.mid);
@@ -490,7 +490,7 @@ impl Mode for RailShooter {
         // Checkpoint rings (silver / rare gold), shimmering on treble.
         for r in &self.rings {
             let z = -(r.d - d_now);
-            if z > 2.0 || z < -FAR {
+            if !(-FAR..=2.0).contains(&z) {
                 continue;
             }
             let passing = (d_now - r.d).abs() < 1.2;
@@ -510,7 +510,7 @@ impl Mode for RailShooter {
                 continue;
             }
             let z = -(e.d - d_now);
-            if z > 2.0 || z < -FAR {
+            if !(-FAR..=2.0).contains(&z) {
                 continue;
             }
             let s = if e.boss { 1.35 + 0.3 * feat.bass } else { 1.0 };

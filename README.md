@@ -165,14 +165,17 @@ The binary lands at `target/release/cherry-visualizer.exe` — copy it anywhere
 and double-click it. Supports mp3, wav, flac, ogg, m4a.
 
 Cherry Visualizer opens to a normal **desktop UI** (egui): a **menu bar** (File / View /
-Help), a **tabbed sidebar** — *Modes* (pick the visualizer), *Settings* (live
-sliders for the selected mode), *Library*, *Export* — and a **transport bar**
-with play/pause, a seek slider, and volume. Open a track from **File → Open** (it
-decodes on a background thread, so the window never freezes), pick a mode, and
-tune it live.
+Help), a **tabbed sidebar** — *Modes* (a tile grid grouped into game-likes and
+visualizers), *Settings* (live sliders for the selected mode), *Library* (recent
+tracks), *Export* — and a **transport bar** with play/pause, a seek slider, and
+volume. Open a track from **File → Open**, click a recent one in the Library, or
+just **drop an audio file on the window** — decoding runs on a background
+thread, so the window never freezes. Theme, volume, chrome and the recent list
+**persist across launches**.
 
-**Shortcuts:** `Space` play/pause · `Tab` next mode · `R` restart · `F`
-fullscreen. With no track loaded, a built-in demo groove plays.
+**Shortcuts:** `Space` play/pause · `Tab` next mode · `←`/`→` seek · `↑`/`↓`
+volume · `R` restart · `F` fullscreen. With no track loaded, a built-in demo
+groove plays.
 
 ## Export to video
 
@@ -186,8 +189,11 @@ your `PATH` (libx264 + aac).
 There's also a headless CLI for batch jobs and CI:
 
 ```
-cargo run --release -- --export out.mp4 --file song.mp3 --res 1080 --fps 60
+cargo run --release -- --export out.mp4 --file song.mp3 --mode surfer --res 1080 --fps 60
 ```
+
+(`--mode <tag>` matches a mode by name substring and also picks the startup mode
+for a normal launch.)
 
 ## How it works
 

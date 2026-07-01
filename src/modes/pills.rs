@@ -83,11 +83,10 @@ impl Mode for Pills {
     fn update(&mut self, ctx: &FrameCtx) {
         self.focus_ang += ctx.dt * 0.6;
         self.bloom = (self.bloom - ctx.dt * 3.0).max(0.0);
-        if let Some(s) = ctx.feat.beat {
-            if s > 1.8 {
+        if let Some(s) = ctx.feat.beat
+            && s > 1.8 {
                 self.bloom = (s * 0.3).min(0.6) * self.bloom_amt;
             }
-        }
     }
 
     fn draw(&self, ctx: &FrameCtx) {

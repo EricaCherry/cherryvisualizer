@@ -39,7 +39,7 @@ impl Lava {
                 y: 3.0 + hash01(i * 5) * 3.0,
                 vy: (hash01(i * 7) - 0.5) * 1.3,
                 base_r: 0.45 + hash01(i * 9) * 0.45,
-                phase: hash01(i * 11) * 6.28,
+                phase: hash01(i * 11) * std::f32::consts::TAU,
             });
         }
     }
@@ -84,11 +84,10 @@ impl Mode for Lava {
         let dt = ctx.dt;
         let feat = ctx.feat;
         self.beat_pulse = (self.beat_pulse - dt * 3.0).max(0.0);
-        if let Some(s) = feat.beat {
-            if s > 1.8 {
+        if let Some(s) = feat.beat
+            && s > 1.8 {
                 self.beat_pulse = 0.4;
             }
-        }
         for b in &mut self.blobs {
             b.y += b.vy * dt * (0.5 + feat.bass * 1.5);
             if b.y < 3.0 {

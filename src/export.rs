@@ -12,7 +12,9 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, sync_channel, Receiver, SyncSender, TryRecvError};
+use std::sync::Arc;
 use std::time::Instant;
 
 use macroquad::prelude::*;
@@ -50,6 +52,9 @@ pub struct Exporter {
     audio_path: PathBuf,
     log_path: PathBuf,
     finishing: bool,
+    /// Set by [`Exporter::cancel`]; the encoder thread deletes the partial
+    /// output right after ffmpeg exits (the only moment the file is free).
+    cancelled: Arc<AtomicBool>,
 }
 
 impl Exporter {
@@ -74,6 +79,9 @@ impl Exporter {
         let (tx, rx) = sync_channel::<Msg>(3);
         let (result_tx, result_rx) = channel();
         let log_for_thread = log_path.clone();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let cancelled_thread = cancelled.clone();
+        let out_for_thread = out_path.clone();
         std::thread::spawn(move || {
             let mut err = None;
             while let Ok(Msg::Frame(bytes)) = rx.recv() {
@@ -89,6 +97,14 @@ impl Exporter {
                 (None, Ok(s)) => Err(format!("ffmpeg exited with {s}{}", ffmpeg_tail(&log_for_thread))),
                 (None, Err(e)) => Err(format!("ffmpeg wait failed: {e}")),
             };
+            // On cancel, ffmpeg still finalizes a truncated-but-valid MP4 when
+            // the pipe closes; delete it HERE, right after the child exits —
+            // the one moment the file is guaranteed free and guaranteed to be
+            // OURS (a path-based retry loop could race a follow-up export to
+            // the same file name and delete the new, successful video).
+            if cancelled_thread.load(Ordering::SeqCst) {
+                let _ = std::fs::remove_file(&out_for_thread);
+            }
             let _ = result_tx.send(res);
         });
 
@@ -114,7 +130,17 @@ impl Exporter {
             audio_path,
             log_path,
             finishing: false,
+            cancelled,
         })
+    }
+
+    /// Abort the export and delete the partial output file. Dropping alone
+    /// closes the frame channel and the encoder thread lets ffmpeg finalize a
+    /// truncated-but-valid MP4 — the flag tells that thread to delete it the
+    /// moment the child exits.
+    pub fn cancel(self) {
+        self.cancelled.store(true, Ordering::SeqCst);
+        // Drop closes the channel; the encoder thread does the rest.
     }
 
     pub fn frames_done(&self) -> u32 {

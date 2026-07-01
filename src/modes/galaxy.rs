@@ -83,11 +83,10 @@ impl Mode for Galaxy {
     fn update(&mut self, ctx: &FrameCtx) {
         self.rot += ctx.dt * (0.1 + ctx.feat.mid * 0.6) * self.spin;
         self.pulse = (self.pulse - ctx.dt * 3.0).max(0.0);
-        if let Some(s) = ctx.feat.beat {
-            if s > 1.8 {
+        if let Some(s) = ctx.feat.beat
+            && s > 1.8 {
                 self.pulse = (s * 0.3).min(0.6);
             }
-        }
     }
 
     fn draw(&self, ctx: &FrameCtx) {
@@ -103,7 +102,7 @@ impl Mode for Galaxy {
             let rr = s.r * 3.6 * breath;
             let x = cx + th.cos() * rr;
             let y = cy + th.sin() * rr * tilt;
-            let flick = 0.5 + 0.5 * (t * 2.0 + s.flick * 6.28).sin() * feat.treble;
+            let flick = 0.5 + 0.5 * (t * 2.0 + s.flick * std::f32::consts::TAU).sin() * feat.treble;
             let bright = (1.0 - s.r) + flick * 0.3;
             let c = mix(teal_deep(), grade((0.5 + (1.0 - s.r) * 0.4 + flick * 0.3).min(1.0)), 0.7);
             v.circle(x, y, 0.02 + bright * 0.05, with_alpha(c, (0.3 + bright * 0.6).min(1.0)));

@@ -7,6 +7,7 @@
 //!   - TIMEBASE ("Time") sets the horizontal zoom (how much of the window shows);
 //!   - AMPLITUDE is the vertical gain;
 //!   - plus line width, a trigger on/off, and CRT persistence (past sweeps fade).
+//!
 //! The PCM amplitude IS the loudness (per-track calibrated — see
 //! `Track::window_at`), so quiet stays small and loud fills the screen with no
 //! coupling hacks.
@@ -23,7 +24,13 @@ use crate::view::{View, AH, AW};
 const NPTS: usize = 512;
 
 pub struct Scope {
+    /// The current sweep, refreshed every render frame (stays smooth at any
+    /// refresh rate).
+    live: Vec<f32>,
+    /// Past sweeps (the phosphor ghosts), committed on a fixed 60 Hz cadence
+    /// so "Persistence" spans the same real time at 30 or 60 fps.
     history: VecDeque<Vec<f32>>,
+    acc: f32,
     amp: f32,      // vertical gain
     time: f32,     // timebase: fraction of the window shown (horizontal zoom)
     thick: f32,    // line width
@@ -33,7 +40,16 @@ pub struct Scope {
 
 impl Scope {
     pub fn new() -> Self {
-        Scope { history: VecDeque::new(), amp: 4.0, time: 0.5, thick: 1.0, persist: 14, trigger: true }
+        Scope {
+            live: Vec::new(),
+            history: VecDeque::new(),
+            acc: 0.0,
+            amp: 4.0,
+            time: 0.5,
+            thick: 1.0,
+            persist: 14,
+            trigger: true,
+        }
     }
 
     /// One triggered sweep: find the first RISING zero-crossing (so the trace
@@ -97,12 +113,21 @@ impl Mode for Scope {
     }
 
     fn reset(&mut self, _track: &Track) {
+        self.live.clear();
         self.history.clear();
+        self.acc = 0.0;
     }
 
     fn update(&mut self, ctx: &FrameCtx) {
-        self.history.push_back(self.sample(ctx.wave));
-        while self.history.len() > self.persist {
+        self.live = self.sample(ctx.wave);
+        self.acc += ctx.dt;
+        while self.acc >= 1.0 / 60.0 {
+            self.acc -= 1.0 / 60.0;
+            self.history.push_back(self.live.clone());
+        }
+        // Persistence counts TOTAL traces (live + ghosts), as it always did —
+        // so the ghost buffer holds one less than the slider value.
+        while self.history.len() > self.persist.saturating_sub(1) {
             self.history.pop_front();
         }
     }
@@ -115,12 +140,7 @@ impl Mode for Scope {
         // Faint baseline (zero line).
         v.line(0.0, cy, AW, cy, 1.0, with_alpha(teal_deep(), 0.22));
 
-        let n = self.history.len().max(1);
-        for (k, row) in self.history.iter().enumerate() {
-            let newest = k + 1 == n;
-            let age = (k + 1) as f32 / n as f32;
-            let width = (if newest { 2.2 } else { 1.1 }) * self.thick;
-            let fade = if newest { 1.0 } else { age * age * 0.22 };
+        let trace = |row: &[f32], width: f32, fade: f32| {
             for i in 1..NPTS {
                 let x0 = (i - 1) as f32 / (NPTS - 1) as f32 * AW;
                 let x1 = i as f32 / (NPTS - 1) as f32 * AW;
@@ -132,6 +152,14 @@ impl Mode for Scope {
                 let c = mix(teal(), amber(), hot);
                 v.line(x0, y0, x1, y1, width, with_alpha(c, fade));
             }
+        };
+        let n = self.history.len().max(1);
+        for (k, row) in self.history.iter().enumerate() {
+            let age = (k + 1) as f32 / n as f32;
+            trace(row, 1.1 * self.thick, age * age * 0.22);
+        }
+        if self.live.len() == NPTS {
+            trace(&self.live, 2.2 * self.thick, 1.0);
         }
     }
 }

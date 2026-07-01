@@ -163,8 +163,7 @@ impl Breakout {
         let (force_send, _force_recv) = channel();
         let events = ChannelEventCollector::new(col_send, force_send);
 
-        let mut params = IntegrationParameters::default();
-        params.dt = 1.0 / 60.0;
+        let params = IntegrationParameters { dt: 1.0 / 60.0, ..Default::default() };
 
         let mut me = Breakout {
             bodies,
@@ -475,7 +474,10 @@ impl Mode for Breakout {
         }
     }
 
-    fn reset(&mut self, _track: &Track) {
+    fn reset(&mut self, track: &Track) {
+        // Seed the serve RNG from the track so the same song always produces
+        // the same video (the exporter re-runs reset + update from frame 0).
+        macroquad::rand::srand(track.pcm.len() as u64 ^ ((track.sr as u64) << 40) | 1);
         for b in &mut self.bricks {
             b.alive = true;
             b.anim = 1.0;
@@ -553,12 +555,11 @@ impl Mode for Breakout {
         }
 
         // 4) Beat = a brief speed surge + paddle flash.
-        if let Some(strength) = feat.beat {
-            if strength > 1.8 {
+        if let Some(strength) = feat.beat
+            && strength > 1.8 {
                 self.boost = 1.0 + (strength * 0.10).min(0.35);
                 self.paddle_flash = self.paddle_flash.max(0.8);
             }
-        }
 
         // 5) Hold EACH ball at a constant (loudness-scaled) speed; keep a real
         //    vertical component so it always travels to the wall and back.

@@ -75,11 +75,10 @@ impl Mode for Spectrum {
     fn update(&mut self, ctx: &FrameCtx) {
         let dt = ctx.dt;
         self.flash = (self.flash - dt * 3.0).max(0.0);
-        if let Some(s) = ctx.feat.beat {
-            if s > 1.8 {
+        if let Some(s) = ctx.feat.beat
+            && s > 1.8 {
                 self.flash = self.flash.max((s * 0.22).min(0.6));
             }
-        }
         // Bars track the analysis bands DIRECTLY — the single smoothing already
         // happened once in analysis.rs (the AnalyserNode EMA). No second EMA.
         for i in 0..N_BANDS {

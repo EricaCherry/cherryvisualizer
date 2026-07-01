@@ -192,6 +192,7 @@ fn seg3d(a: Vec3, b: Vec3, thick: f32, c: Color) {
 /// about lateral) and squashes / stretches its legs, so it morphs through each
 /// obstacle. Local coords: x right, y up, z toward the camera; origin at the
 /// body centre, placed at `pivot`.
+#[allow(clippy::too_many_arguments)] // one pose = one call; a PoseParams struct would be noise
 fn draw_creature(pivot: Vec3, spin: f32, roll: f32, squash: f32, leg: f32, run: f32, grounded: bool, c: Color) {
     let s = 1.5;
     let th = 0.085;
@@ -524,7 +525,7 @@ impl Mode for Surfer {
         // ---- typed obstacle glyphs welded onto the ribbon -------------------
         for e in &self.course {
             let z = -(e.d - d_now);
-            if z > 2.0 || z < -FAR {
+            if !(-FAR..=2.0).contains(&z) {
                 continue;
             }
             let x = self.weave(e.d);
@@ -544,7 +545,7 @@ impl Mode for Surfer {
         let spin = t * 3.0 + feat.treble * 5.0;
         for (i, c) in self.coins.iter().enumerate().skip(self.prev_collected) {
             let z = -(c.d - d_now);
-            if z > 1.5 || z < -FAR * 0.8 {
+            if !(-FAR * 0.8..=1.5).contains(&z) {
                 continue;
             }
             let a = spin + i as f32 * 0.7;
