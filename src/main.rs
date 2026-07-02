@@ -137,14 +137,22 @@ fn apply_custom(a: [[u8; 3]; 4]) {
     style::set_custom(style::palette_from_anchors(col(a[0]), col(a[1]), col(a[2]), col(a[3])));
 }
 
-fn window_conf() -> Conf {
-    Conf {
-        window_title: "Cherry Visualizer".to_owned(),
-        window_width: 1320,
-        window_height: 760,
-        window_resizable: true,
-        sample_count: 4,
-        icon: Some(cherry_icon()),
+fn window_conf() -> macroquad::conf::Conf {
+    macroquad::conf::Conf {
+        miniquad_conf: Conf {
+            window_title: "Cherry Visualizer".to_owned(),
+            window_width: 1320,
+            window_height: 760,
+            window_resizable: true,
+            sample_count: 4,
+            icon: Some(cherry_icon()),
+            ..Default::default()
+        },
+        // The heightfield ground (Terrain / Rail Shooter) is one ~21k-index
+        // mesh; macroquad's defaults (10k verts / 5k indices) silently CLAMP
+        // anything bigger — dropped triangles and a per-frame console warning.
+        draw_call_vertex_capacity: 32_768,
+        draw_call_index_capacity: 65_536,
         ..Default::default()
     }
 }

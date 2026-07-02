@@ -115,6 +115,9 @@ pub enum Surface {
     Panel,
     /// Sleek brushed grooves — the Beat Surfer ribbon.
     Ribbon,
+    /// Matte multi-octave rock — the Terrain landscape (isotropic, no metal:
+    /// the ribbon's lengthwise grooves read as scratches at mountain scale).
+    Rock,
 }
 
 /// World-space light + look parameters for one bound draw.
@@ -134,6 +137,7 @@ struct Lit {
     mat: Material,
     panel: (Texture2D, Texture2D),
     ribbon: (Texture2D, Texture2D),
+    rock: (Texture2D, Texture2D),
 }
 
 thread_local! {
@@ -144,9 +148,14 @@ fn v3(c: Color) -> Vec3 {
     vec3(c.r, c.g, c.b)
 }
 
-/// Bilinear value-noise sample at a frequency (tiles via wrapping integer hash).
+/// Bilinear value-noise sample at a frequency. The lattice is hashed MODULO the
+/// frequency so the map is seamless under REPEAT wrap — without this every
+/// texture repeat shows up as a bright seam line across smooth surfaces.
 fn vnoise(fx: f32, fy: f32, freq: f32, seed: i32) -> f32 {
-    let val = |ix: i32, iy: i32| hash01(ix.wrapping_mul(73856093) ^ iy.wrapping_mul(19349663) ^ seed);
+    let m = (freq as i32).max(1);
+    let val = |ix: i32, iy: i32| {
+        hash01(ix.rem_euclid(m).wrapping_mul(73856093) ^ iy.rem_euclid(m).wrapping_mul(19349663) ^ seed)
+    };
     let (gx, gy) = (fx * freq, fy * freq);
     let (x0, y0) = (gx.floor() as i32, gy.floor() as i32);
     let (tx, ty) = (gx - x0 as f32, gy - y0 as f32);
@@ -177,10 +186,19 @@ fn bake(kind: Surface) -> (Texture2D, Texture2D) {
                     (0.15 + 0.55 * seam * grime + rivet).clamp(0.0, 1.0)
                 }
                 Surface::Ribbon => {
-                    // Brushed lengthwise grooves + a fine tooth of noise.
+                    // Brushed lengthwise grooves + a WHISPER of tooth — heavier
+                    // noise smears into static stripes at road scale.
                     let groove = 0.5 + 0.22 * (fx * std::f32::consts::TAU * 7.0).sin();
-                    let fine = 0.16 * vnoise(fx, fy, 48.0, 23) + 0.1 * vnoise(fx, fy, 120.0, 31);
+                    let fine = 0.07 * vnoise(fx, fy, 48.0, 23) + 0.04 * vnoise(fx, fy, 120.0, 31);
                     (groove * 0.8 + fine).clamp(0.0, 1.0)
+                }
+                Surface::Rock => {
+                    // Directionless fBm — rolling undulation with fine grit.
+                    (0.50 * vnoise(fx, fy, 4.0, 41)
+                        + 0.28 * vnoise(fx, fy, 9.0, 43)
+                        + 0.15 * vnoise(fx, fy, 21.0, 47)
+                        + 0.07 * vnoise(fx, fy, 47.0, 53))
+                    .clamp(0.0, 1.0)
                 }
             };
         }
@@ -190,6 +208,9 @@ fn bake(kind: Surface) -> (Texture2D, Texture2D) {
     let strength = match kind {
         Surface::Panel => 2.6,
         Surface::Ribbon => 1.4,
+        // Gentle: under a raking light a strong bump reads as static on the
+        // flat plains, not as rock.
+        Surface::Rock => 1.4,
     };
     let at = |x: i32, y: i32| h[(y.rem_euclid(n as i32) as usize) * n + x.rem_euclid(n as i32) as usize];
     let mut nbuf = vec![0u8; n * n * 4];
@@ -216,8 +237,17 @@ fn bake(kind: Surface) -> (Texture2D, Texture2D) {
                     (m, (0.85 - 0.45 * m).clamp(0.1, 0.95))
                 }
                 Surface::Ribbon => (0.55 + 0.35 * hv, (0.4 - 0.25 * hv).clamp(0.06, 0.6)),
+                // Matte stone: essentially dielectric, rough everywhere; the
+                // grey channel carries the mottling instead of the specular.
+                Surface::Rock => (0.04, (0.72 + 0.24 * hv).clamp(0.1, 0.96)),
             };
-            mbuf[o] = (hv * 255.0) as u8;
+            let grey = match kind {
+                // Compress the ribbon's albedo banding — the relief lives in
+                // the normal map; the color should stay sleek.
+                Surface::Ribbon => 0.5 + (hv - 0.5) * 0.5,
+                _ => hv,
+            };
+            mbuf[o] = (grey * 255.0) as u8;
             mbuf[o + 1] = (rough * 255.0) as u8;
             mbuf[o + 2] = (metal * 255.0) as u8;
             mbuf[o + 3] = 255;
@@ -267,7 +297,7 @@ impl Lit {
             },
         )
         .expect("PBR material failed to compile");
-        Lit { mat, panel: bake(Surface::Panel), ribbon: bake(Surface::Ribbon) }
+        Lit { mat, panel: bake(Surface::Panel), ribbon: bake(Surface::Ribbon), rock: bake(Surface::Rock) }
     }
 }
 
@@ -283,6 +313,7 @@ pub fn bind(surface: Surface, p: &LitParams) {
         let (ntex, mtex) = match surface {
             Surface::Panel => &lit.panel,
             Surface::Ribbon => &lit.ribbon,
+            Surface::Rock => &lit.rock,
         };
         gl_use_material(&lit.mat);
         lit.mat.set_texture("NormalTex", ntex.clone());

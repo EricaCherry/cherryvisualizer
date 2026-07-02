@@ -13,10 +13,14 @@ use crate::style::{self, amber, hash01, mix, spec, teal_deep};
 use crate::track::Track;
 use crate::view;
 
-const TERRAIN_W: f32 = 24.0;
-const NEAR: f32 = 5.0;
-const DEPTH: f32 = 68.0;
-const SKY_HORIZON: Color = Color::new(0.10, 0.095, 0.12, 1.0);
+// A wide vista: the range must read as a landscape under the sky, not one
+// mountain filling the frame.
+const TERRAIN_W: f32 = 44.0;
+// The front row starts right under the camera (z = 9) so the frustum never
+// looks past the mesh's leading edge into the void below the frame.
+const NEAR: f32 = 9.5;
+const DEPTH: f32 = 74.0;
+const SKY_HORIZON: Color = Color::new(0.12, 0.11, 0.14, 1.0);
 
 pub struct Terrain {
     hf: HeightField,
@@ -26,7 +30,7 @@ pub struct Terrain {
 
 impl Terrain {
     pub fn new() -> Self {
-        Terrain { hf: HeightField::new(), height: 5.2, speed: 22.0 }
+        Terrain { hf: HeightField::new(), height: 4.0, speed: 22.0 }
     }
 }
 
@@ -98,12 +102,16 @@ impl Mode for Terrain {
         draw_rectangle(0.0, horizon_y, sw, sh - horizon_y, SKY_HORIZON);
 
         // ---- 3D pass --------------------------------------------------------
-        let cam_pos = vec3(0.0, 5.2 + feat.bass * 0.6, 9.0);
+        // The camera floats a little above the tallest possible ridge, off the
+        // centre line (the mirrored spectrum is symmetric; a 3/4 view keeps it
+        // from reading synthetic), looking down the valley so peaks silhouette
+        // against the sky instead of towering past the eye line into a trench.
+        let cam_pos = vec3(3.5, 7.4 + feat.bass * 0.5, 9.0);
         set_camera(&Camera3D {
             position: cam_pos,
-            target: vec3(0.0, 1.6, -30.0),
+            target: vec3(0.0, 0.2, -40.0),
             up: vec3(0.0, 1.0, 0.0),
-            fovy: (58.0 + feat.rms * 6.0).to_radians(),
+            fovy: (58.0 + feat.rms * 5.0).to_radians(),
             aspect: Some(view::screen_w() / view::screen_h()),
             render_target: view::export_target(),
             ..Default::default()
@@ -114,16 +122,18 @@ impl Mode for Terrain {
         let (verts, idx) = self.hf.build_mesh(TERRAIN_W, NEAR, DEPTH, self.height);
 
         material3d::bind(
-            material3d::Surface::Ribbon,
+            material3d::Surface::Rock,
             &material3d::LitParams {
                 cam: cam_pos,
-                light_dir: vec3(-0.3, -0.85, -0.35),
-                light_color: { let a = mix(amber(), spec(), 0.4); vec3(a.r, a.g, a.b) },
-                ambient: { let s = teal_deep(); vec3(s.r, s.g, s.b) * 1.0 },
+                // A warm low key light raking across the ridges from the left,
+                // lifted enough that the slopes model instead of going murky.
+                light_dir: vec3(-0.55, -0.75, -0.3),
+                light_color: { let a = mix(amber(), spec(), 0.45); vec3(a.r, a.g, a.b) * 1.25 },
+                ambient: { let s = teal_deep(); vec3(s.r, s.g, s.b) * 1.35 },
                 horizon: SKY_HORIZON,
                 metal: 0.3,
-                rough: 0.95,
-                tile: vec2(1.0, 1.0),
+                rough: 1.0,
+                tile: vec2(0.65, 0.65),
                 pulse: feat.bass * 0.5 + feat.beat.unwrap_or(0.0) * 0.4,
             },
         );

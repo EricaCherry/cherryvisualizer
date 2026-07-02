@@ -427,8 +427,10 @@ impl Mode for RailShooter {
         // and fogged in-shader). UVs bake in the tiling so one draw covers the
         // whole run. The corridor geometry is STATIC — it does not pulse with the
         // beat (the music is read by the ship/enemies/lasers, not the walls).
-        let floor_c = mix(teal_deep(), teal(), 0.18);
-        let wall_c = mix(slate(), teal_deep(), 0.3);
+        // Bright enough base colors that the PBR pass (diffuse is albedo/pi)
+        // leaves readable panels, not a black pit.
+        let floor_c = mix(teal_deep(), teal(), 0.45);
+        let wall_c = mix(slate(), teal(), 0.35);
         let wall_h = 3.4;
         let (zn, zf) = (6.0f32, -FAR);
         let vz = 0.12; // along-corridor tiling rate
@@ -464,8 +466,8 @@ impl Mode for RailShooter {
             &material3d::LitParams {
                 cam: cam_pos,
                 light_dir: vec3(-0.3, -0.7, -0.5),
-                light_color: { let c = mix(teal(), spec(), 0.6); vec3(c.r, c.g, c.b) * 1.3 },
-                ambient: { let s = mix(slate(), teal_deep(), 0.4); vec3(s.r, s.g, s.b) * 0.95 },
+                light_color: { let c = mix(teal(), spec(), 0.6); vec3(c.r, c.g, c.b) * 1.7 },
+                ambient: { let s = mix(slate(), teal_deep(), 0.4); vec3(s.r, s.g, s.b) * 1.6 },
                 horizon: mix(ink(), slate(), 0.7),
                 metal: 0.6,
                 rough: 0.9,

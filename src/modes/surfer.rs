@@ -507,7 +507,7 @@ impl Mode for Surfer {
                 ambient: { let s = style::teal_deep(); vec3(s.r, s.g, s.b) * 0.55 },
                 horizon: HORIZON,
                 metal: 0.85,
-                rough: 1.0,
+                rough: 0.75, // sleek: let the brushed metal actually catch the key light
                 tile: vec2(2.0, 0.16),
                 pulse: feat.bass * 0.6 + feat.beat.unwrap_or(0.0) * 0.4,
             },
