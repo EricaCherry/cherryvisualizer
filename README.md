@@ -154,7 +154,15 @@ lit surfaces too, and the material renders identically through the offscreen vid
 exporter. (macroquad hands a custom material only `Model`+`Projection`, so there's no
 view matrix — lighting is done in world space with the camera passed as a uniform.)
 
-## Run it
+## Download
+
+Grab the latest Windows build from the
+**[Releases page](https://github.com/EricaCherry/cherryvisualizer/releases/latest)** —
+one `cherry-visualizer.exe`, no install and no runtime. Double-click it, drop a
+song on the window, and pick a mode. (Video export additionally needs
+[ffmpeg](https://ffmpeg.org/) on your `PATH`; everything else is self-contained.)
+
+## Build it
 
 ```
 cargo run --release            # build + launch
